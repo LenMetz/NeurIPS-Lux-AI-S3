@@ -1,0 +1,6 @@
+my_agent/submission.tar
+my_agent/submission.tar.gz
+replays/
+.conda/
+.ipynb_checkpoints/
+__pycache__/
