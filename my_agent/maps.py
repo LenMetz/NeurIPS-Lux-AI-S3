@@ -51,9 +51,9 @@ class RelicMap():
         for ii, option in enumerate(options):
             if np.max(option)>23 or np.min(option)<0:
                 continue
-            if self.map_knowns[*option]==1:
+            if self.map_knowns[option[0],option[1]]==1:
                 return moves[ii]
-            if self.map_possibles[*option]==0 and self.map_knowns[*option]==0:
+            if self.map_possibles[option[0],option[1]]==0 and self.map_knowns[option[0],option[1]]==0:
                 return moves[ii]
         return np.random.randint(1,5)
         
@@ -65,21 +65,21 @@ class RelicMap():
         check_knowns = self.map_knowns.copy()
         check_possibles = self.map_possibles.copy()
         for unit in unit_positions:
-            if check_knowns[*unit]==1:
+            if check_knowns[unit[0],unit[1]]==1:
                 ones += 1
-                check_knowns[*unit]=0
-            if check_possibles[*unit]==1:
-                check_possibles[*unit]=1
+                check_knowns[unit[0],unit[1]]=0
+            if check_possibles[unit[0],unit[1]]==1:
+                check_possibles[unit[0],unit[1]]=1
                 S.append(unit)
         r1 = increase-ones
         r2 = 0
         c_sum = 0
         if r1<=0:
             for unit in S:
-                self.map_possibles[*unit]=0
+                self.map_possibles[unit[0],unit[1]]=0
         else:
             for unit in S:
-                self.map_confidence[*unit]=max(self.map_confidence[*unit],r1/len(S))
+                self.map_confidence[unit[0],unit[1]]=max(self.map_confidence[unit[0],unit[1]],r1/len(S))
             '''for unit in S:
                 r2 += self.map_confidence[*unit]
                 if self.map_confidence[*unit]==0:
@@ -90,11 +90,11 @@ class RelicMap():
                 c_sum += (r1-r2)/len(F)'''
             for unit in S:
                 #self.map_confidence[*unit] = self.map_confidence[*unit]*(r1/c_sum)
-                if self.map_confidence[*unit]==0:
-                    self.map_possibles[*unit]=0
-                if self.map_confidence[*unit]==1:
-                    self.map_possibles[*unit]=0
-                    self.map_knowns[*unit]=1
+                if self.map_confidence[unit[0],unit[1]]==0:
+                    self.map_possibles[unit[0],unit[1]]=0
+                if self.map_confidence[unit[0],unit[1]]==1:
+                    self.map_possibles[unit[0],unit[1]]=0
+                    self.map_knowns[unit[0],unit[1]]=1
                     
         
         

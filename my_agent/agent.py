@@ -164,7 +164,7 @@ class Agent():
             unit_pos = unit_positions[unit_id]
             direction = None
             # remove target if not possible
-            if self.relic_map.map_possibles[*unit_pos]==0 and self.unit_has_target[unit_id]==1:
+            if self.relic_map.map_possibles[unit_pos[0], unit_pos[1]]==0 and self.unit_has_target[unit_id]==1:
                 self.unit_has_target[unit_id] = -1
                 self.unit_targets[unit_id] = np.array([-1,-1])
                 
@@ -178,18 +178,18 @@ class Agent():
             
 
             # if one possible, leave with probability 1-confidence
-            if self.relic_map.map_possibles[*unit_pos]==1:
+            if self.relic_map.map_possibles[unit_pos[0], unit_pos[1]]==1:
                 #print("on possible")
                 self.unit_targets[unit_id] = unit_pos
                 self.unit_has_target[unit_id] = 1
-                draw = np.random.binomial(1,1-np.clip(self.relic_map.map_confidence[*unit_pos],0,1),1)
+                draw = np.random.binomial(1,1-np.clip(self.relic_map.map_confidence[unit_pos[0], unit_pos[1]],0,1),1)
                 #draw = np.random.binomial(1,1-np.clip(self.relic_map.map_confidence[*unit_pos],0,1),1)
                 if draw:
                     #print("move away")
                     direction = self.relic_map.move_away(unit_pos)
 
             # if on target and it's neither known nor possible
-            if list(unit_pos)==list(self.unit_targets[unit_id]) and self.relic_map.map_possibles[*unit_pos]==0 and self.relic_map.map_knowns[*unit_pos]==0:
+            if list(unit_pos)==list(self.unit_targets[unit_id]) and self.relic_map.map_possibles[unit_pos[0], unit_pos[1]]==0 and self.relic_map.map_knowns[unit_pos[0], unit_pos[1]]==0:
                 #print("on target and it's nothing")
                 self.unit_has_target[unit_id] = -1
             
