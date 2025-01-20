@@ -39,11 +39,11 @@ class RelicMap():
 
     def get_fragments(self):
         knowns = np.transpose((self.map_knowns==1).nonzero())
-        return list(knowns)
+        return knowns.tolist()
 
     def get_possibles(self):
         poss = np.transpose((self.map_possibles==1).nonzero())
-        return list(poss)
+        return poss.tolist()
 
     def move_away(self, pos):
         moves = [1,2,3,4]
@@ -80,24 +80,71 @@ class RelicMap():
         else:
             for unit in S:
                 self.map_confidence[unit[0],unit[1]]=max(self.map_confidence[unit[0],unit[1]],r1/len(S))
-            '''for unit in S:
-                r2 += self.map_confidence[*unit]
-                if self.map_confidence[*unit]==0:
-                    F.append(unit)
-            c_sum += r2
-            for unit in F:
-                self.map_confidence[*unit] = (r1-r2)/len(F)
-                c_sum += (r1-r2)/len(F)'''
             for unit in S:
-                #self.map_confidence[*unit] = self.map_confidence[*unit]*(r1/c_sum)
                 if self.map_confidence[unit[0],unit[1]]==0:
                     self.map_possibles[unit[0],unit[1]]=0
+                    self.map_possibles[abs(unit[1]-23),abs(unit[0]-23)]=0
                 if self.map_confidence[unit[0],unit[1]]==1:
                     self.map_possibles[unit[0],unit[1]]=0
                     self.map_knowns[unit[0],unit[1]]=1
+                    self.map_possibles[abs(unit[1]-23),abs(unit[0]-23)]=0
+                    self.map_knowns[abs(unit[1]-23),abs(unit[0]-23)]=1
                     
         
         
+class TileMap():
+    def __init__(self):
+        self.map = -np.ones((24,24))
+        self.known = np.zeros((24,24))
+    def update(self, current):
+        shift = self.check_shift(current)
+        self.map[current!=-1] = current[current!=-1]
+        self.known[self.map!=-1] = 1
+        self.mirror()
+        return shift
         
+    def mirror(self):
+        self.map[::-1,::-1].T[self.map!=-1] = self.map[self.map!=-1]
+        self.known[::-1,::-1].T[self.known==1] = self.known[self.known==1]
         
+    def check_shift(self, current):
+        if np.sum(1*((self.known*self.map)[current!=-1]!=(self.known*current)[current!=-1]))>0:
+            map1 = (self.known*self.map)[0:23,1:24]
+            map2 = (self.known*self.map)[1:24,0:23]
+            mapcp = self.map.copy()
+            self.map = -np.ones((24,24))
+            current1 = (self.known*current)[1:24,0:23]
+            current2 = (self.known*current)[0:23,1:24]
+            new_known = np.zeros((24,24))
+            if np.sum(1*(map1[current1!=-1]!=current1[current1!=-1]))>np.sum(1*(map2[current2!=-1]!=current2[current2!=-1])):
+                self.map[0:23,1:24] = mapcp[1:24,0:23]
+                new_known[0:23,1:24] = self.known[1:24,0:23]
+                self.known = new_known
+            else:
+                self.map[1:24,0:23] = mapcp[0:23,1:24]
+                new_known[1:24,0:23] = self.known[0:23,1:24]
+                self.known = new_known
+            return 1
+        else:
+            return 0
+            
+
+class EnergyMap():
+    def __init__(self):
+        self.map = np.full((24,24),1.5)
+        self.known = np.zeros((24,24))
+    def update(self, current):
+        self.check_shift(current)
+        self.map[current!=-1] = current[current!=-1]
+        self.known[self.map!=1.5] = 1
+        self.mirror()
+        
+    def mirror(self):
+        self.map[::-1,::-1].T[self.map!=1.5] = self.map[self.map!=1.5]
+        self.known[::-1,::-1].T[self.known==1] = self.known[self.known==1]
+        
+    def check_shift(self, current):
+        if np.sum(1*((self.known*self.map)[current!=-1]!=(self.known*current)[current!=-1]))>0:
+            self.map = np.full((24,24),1.5)
+            self.known = np.zeros((24,24))
         
