@@ -2,6 +2,7 @@ import numpy as np
 import random
 
 
+
 class RelicMap():
     '''
     Relic map keeps track of locations of relic positions, known fragments, disproven fragments and possible fragments.
@@ -36,9 +37,9 @@ class RelicMap():
                 if pos[0]+x>=0 and pos[0]+x<=23 and pos[1]+y>=0 and pos[1]+y<=23 and self.map_knowns[pos[0],pos[1]]!=1:
                     if self.map_knowns[pos[0]+x,pos[1]+y] !=1:
                         self.map_possibles[pos[0]+x,pos[1]+y] = 1
-                        #self.map_possibles[abs(pos[1]+y-23),abs(pos[0]+x-23)] = 1
+                        self.map_possibles[abs(pos[1]+y-23),abs(pos[0]+x-23)] = 1
                         self.map_confidence[pos[0]+x,pos[1]+y] = 5/9
-                        #self.map_confidence[abs(pos[1]+y-23),abs(pos[0]+x-23)] = 5/9
+                        self.map_confidence[abs(pos[1]+y-23),abs(pos[0]+x-23)] = 5/9
         
         #self.map_confidence[pos[0]-2:pos[0]+3,pos[1]-2:pos[1]+3] = 9/25
         #self.map_confidence[abs(pos[1]-23)-2:abs(pos[1]-23)+3,abs(pos[0]-23)-2:abs(pos[0]-23)+3] = 9/25
@@ -49,7 +50,7 @@ class RelicMap():
             return knowns.tolist()
         own = []
         for k in knowns:
-            if abs(k[0]-start[0])+abs(k[0]-start[1])<24:
+            if abs(k[0]-start[0])+abs(k[1]-start[1])<24:
                 own.append(k)
         return own
 
@@ -59,7 +60,7 @@ class RelicMap():
             return poss
         own = []
         for k in poss.tolist():
-            if abs(k[0]-start[0])+abs(k[0]-start[1])<24:
+            if abs(k[0]-start[0])+abs(k[1]-start[1])<24:
                 own.append(k)
         return own
 
@@ -113,6 +114,7 @@ class RelicMap():
                     self.map_possibles[abs(unit[1]-23),abs(unit[0]-23)]=0
                     self.map_knowns[abs(unit[1]-23),abs(unit[0]-23)]=1
                     
+                    
         
         
 class TileMap():
@@ -155,19 +157,52 @@ class EnergyMap():
     def __init__(self):
         self.map = np.full((24,24),1.5)
         self.known = np.zeros((24,24))
+        self.energy_maps = []
+        self.positions = []
+        for x in range(24):
+            for y in range(24):
+                if x+y>23:
+                    break
+                self.energy_maps.append(self.calculate_energy([x,y]))
+                self.positions.append([x,y])
+    
+
+    def energy_function(self, d):
+        return np.sin(1.2*d+1)*4
+    
+    def calculate_energy(self, pos):
+        pos2 = [abs(pos[1]-23),abs(pos[0]-23)]
+        a = np.stack((np.repeat(np.arange(24),24,axis=0).reshape((24,24)),
+                      np.repeat(np.arange(24),24,axis=0).reshape((24,24)).T),axis=2)
+        e1 = self.energy_function(np.linalg.norm(a-np.array(pos),axis=2))
+        e2 = self.energy_function(np.linalg.norm(a-np.array(pos2),axis=2))
+        e = np.array([e1,e2])
+        e = np.where(
+                e.mean() < 0.25,
+                e + (0.25 - e.mean()),
+                e,
+            )
+        e = np.round(e.sum(0)).astype(np.int16)+1
+        e = np.clip(
+                e, -10, 10
+            )
+        return e.astype(float)
+    
     def update(self, current):
-        self.check_shift(current)
-        self.map[current!=-1] = current[current!=-1]
-        self.known[self.map!=1.5] = 1
-        self.mirror()
+        mask = 1*(current!=-1)
+        shift = self.check_shift(current)
+        if shift:
+            for m in self.energy_maps:
+                if (mask*current==mask*m).all():
+                    self.map = m
+                    break
+                    
         
-    def mirror(self):
-        self.map[::-1,::-1].T[self.map!=1.5] = self.map[self.map!=1.5]
-        self.known[::-1,::-1].T[self.known==1] = self.known[self.known==1]
         
     def check_shift(self, current):
-        if np.sum(1*((self.known*self.map)[current!=-1]!=(self.known*current)[current!=-1]))>0:
-            self.map = np.full((24,24),1.5)
-            self.known = np.zeros((24,24))
+        if np.sum(1*(self.map[current!=-1]!=current[current!=-1]))>0:
+            return 1
+        else:
+            return 0
         
         
