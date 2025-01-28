@@ -34,12 +34,11 @@ class RelicMap():
         #patch[patch==-1] = 1
         for x in range(-2,3,1):
             for y in range(-2,3,1):
-                if pos[0]+x>=0 and pos[0]+x<=23 and pos[1]+y>=0 and pos[1]+y<=23 and self.map_knowns[pos[0],pos[1]]!=1:
-                    if self.map_knowns[pos[0]+x,pos[1]+y] !=1:
-                        self.map_possibles[pos[0]+x,pos[1]+y] = 1
-                        self.map_possibles[abs(pos[1]+y-23),abs(pos[0]+x-23)] = 1
-                        self.map_confidence[pos[0]+x,pos[1]+y] = 5/9
-                        self.map_confidence[abs(pos[1]+y-23),abs(pos[0]+x-23)] = 5/9
+                if pos[0]+x>=0 and pos[0]+x<=23 and pos[1]+y>=0 and pos[1]+y<=23 and self.map_knowns[pos[0]+x,pos[1]+y] !=1:
+                    self.map_possibles[pos[0]+x,pos[1]+y] = 1
+                    self.map_possibles[abs(pos[1]+y-23),abs(pos[0]+x-23)] = 1
+                    self.map_confidence[pos[0]+x,pos[1]+y] = 5/9
+                    self.map_confidence[abs(pos[1]+y-23),abs(pos[0]+x-23)] = 5/9
         
         #self.map_confidence[pos[0]-2:pos[0]+3,pos[1]-2:pos[1]+3] = 9/25
         #self.map_confidence[abs(pos[1]-23)-2:abs(pos[1]-23)+3,abs(pos[0]-23)-2:abs(pos[0]-23)+3] = 9/25
@@ -106,7 +105,8 @@ class RelicMap():
                 if self.map_confidence[unit[0],unit[1]]==0.0:
                     self.map_confidence[unit[0],unit[1]]=0
                     self.map_possibles[unit[0],unit[1]]=0
-                    #self.map_possibles[abs(unit[1]-23),abs(unit[0]-23)]=0
+                    self.map_possibles[abs(unit[1]-23),abs(unit[0]-23)]=0
+                    self.map_confidence[abs(unit[1]-23),abs(unit[0]-23)]=0
                 if self.map_confidence[unit[0],unit[1]]==1.0:
                     self.map_confidence[unit[0],unit[1]]=1
                     self.map_possibles[unit[0],unit[1]]=0
