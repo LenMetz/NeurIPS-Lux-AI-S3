@@ -63,16 +63,19 @@ class RelicMap():
                 own.append(k)
         return own
 
-    def move_away(self, pos):
+    def move_away(self, tile_map, pos):
         moves = [1,2,3,4]
         options = np.array([[pos[0],pos[1]-1],[pos[0]+1,pos[1]],[pos[0],pos[1]+1],[pos[0]-1,pos[1]]])
         for ii, option in enumerate(options):
-            if np.max(option)>23 or np.min(option)<0:
+            if np.max(option)>23 or np.min(option)<0 or (tile_map[option[0],option[1]]==2):
+                moves.remove(ii+1)
                 continue
             if self.map_knowns[option[0],option[1]]==1:
                 return moves[ii]
             if self.map_possibles[option[0],option[1]]==0 and self.map_knowns[option[0],option[1]]==0:
                 return moves[ii]
+        if moves:
+            return moves[0]
         return np.random.randint(1,5)
         
     def step(self, unit_positions, increase):
@@ -105,8 +108,7 @@ class RelicMap():
                 if self.map_confidence[unit[0],unit[1]]==0.0:
                     self.map_confidence[unit[0],unit[1]]=0
                     self.map_possibles[unit[0],unit[1]]=0
-                    self.map_possibles[abs(unit[1]-23),abs(unit[0]-23)]=0
-                    self.map_confidence[abs(unit[1]-23),abs(unit[0]-23)]=0
+                    #self.map_possibles[abs(unit[1]-23),abs(unit[0]-23)]=0
                 if self.map_confidence[unit[0],unit[1]]==1.0:
                     self.map_confidence[unit[0],unit[1]]=1
                     self.map_possibles[unit[0],unit[1]]=0
@@ -152,6 +154,8 @@ class TileMap():
             return 1
         else:
             return 0
+            
+            
 
 class EnergyMap():
     def __init__(self):
@@ -204,5 +208,4 @@ class EnergyMap():
             return 1
         else:
             return 0
-        
         
