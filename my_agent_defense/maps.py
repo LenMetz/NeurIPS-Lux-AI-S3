@@ -48,7 +48,7 @@ class RelicMap():
         if not own:
             return knowns.tolist()
         own = []
-        for k in knowns:
+        for k in knowns.tolist():
             if abs(k[0]-start[0])+abs(k[1]-start[1])<24:
                 own.append(k)
         return own
@@ -56,7 +56,7 @@ class RelicMap():
     def get_possibles(self, start, own=False):
         poss = np.transpose((self.map_possibles==1).nonzero())
         if not own:
-            return poss
+            return poss.tolist()
         own = []
         for k in poss.tolist():
             if abs(k[0]-start[0])+abs(k[1]-start[1])<24:
@@ -65,17 +65,18 @@ class RelicMap():
 
     def move_away(self, tile_map, pos):
         moves = [1,2,3,4]
+        moves_remain = moves.copy()
         options = np.array([[pos[0],pos[1]-1],[pos[0]+1,pos[1]],[pos[0],pos[1]+1],[pos[0]-1,pos[1]]])
         for ii, option in enumerate(options):
             if np.max(option)>23 or np.min(option)<0 or (tile_map[option[0],option[1]]==2):
-                moves.remove(ii+1)
+                moves_remain.remove(ii+1)
                 continue
             if self.map_knowns[option[0],option[1]]==1:
                 return moves[ii]
             if self.map_possibles[option[0],option[1]]==0 and self.map_knowns[option[0],option[1]]==0:
                 return moves[ii]
-        if moves:
-            return moves[0]
+        if moves_remain:
+            return moves_remain[0]
         return np.random.randint(1,5)
         
     def step(self, unit_positions, increase):
@@ -86,12 +87,13 @@ class RelicMap():
         check_knowns = self.map_knowns.copy()
         check_possibles = self.map_possibles.copy()
         for unit in unit_positions:
-            if check_knowns[unit[0],unit[1]]==1:
-                ones += 1
-                check_knowns[unit[0],unit[1]]=0
-            if check_possibles[unit[0],unit[1]]==1:
-                check_possibles[unit[0],unit[1]]=0
-                S.append(unit)
+            if unit[0]!=-1:
+                if check_knowns[unit[0],unit[1]]==1:
+                    ones += 1
+                    check_knowns[unit[0],unit[1]]=0
+                if check_possibles[unit[0],unit[1]]==1:
+                    check_possibles[unit[0],unit[1]]=0
+                    S.append(unit)
         r1 = increase-ones
         r2 = 0
         c_sum = 0

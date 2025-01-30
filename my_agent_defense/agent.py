@@ -33,6 +33,7 @@ class Agent():
         
         self.range = self.env_cfg["unit_sensor_range"]
         self.sap_range = self.env_cfg["unit_sap_range"]
+        self.sap_cost = self.env_cfg["unit_sap_cost"]
         self.width = self.env_cfg["map_width"]
         self.height = self.env_cfg["map_height"]
         a = np.stack((np.repeat(np.arange(24),24,axis=0).reshape((24,24)), np.repeat(np.arange(24),24,axis=0).reshape((24,24)).T),axis=2)
@@ -263,6 +264,17 @@ class Agent():
             if self.compare_positions(pos, self.unit_targets[unit]):
                 self.occupied_fragments.remove([int(self.unit_targets[unit][0]),int(self.unit_targets[unit][1])])
 
+    def sort_targets(self, targets, positions):
+        
+        if targets and positions:
+                T = np.repeat(np.expand_dims(np.array(targets),axis=0),len(positions),axis=0)
+                P = np.tile(np.array(positions), len(targets)).reshape(len(positions),len(targets),2)
+                dists = np.sum(np.abs(T-P),axis=2)
+                best = np.min(dists,axis=0)
+                return (np.array(targets)[np.argsort(best)]).tolist()
+        else:
+            return []
+
     def preaim(self, pos):
         frags = self.relic_map.get_fragments(self.start_pos)
         if pos in frags:
@@ -319,7 +331,7 @@ class Agent():
                 #self.relic_targets.extend(self.relic_to_targets(observed_relic_node_positions[ii]))
                 self.relic_targets.extend(self.relic_map.get_possibles(self.start_pos, own=True))
                 # remove duplicates from relic targets
-                self.relic_targets = list({array.tobytes(): array for array in np.array(self.relic_targets)}.values())
+                self.relic_targets = np.array(list({array.tobytes(): array for array in np.array(self.relic_targets)}.values())).tolist()
                 #print(step, self.discovered_relic_nodes_ids, "\n", self.relic_targets, "\n",  self.unit_has_target, "\n",  self.unit_targets)
         # update maps
         available_unit_ids = np.where(unit_mask)[0].tolist()
@@ -352,10 +364,10 @@ class Agent():
                     self.unit_path[unit],_ = a_star(unit_positions[unit], self.unit_targets[unit], self.tile_map.map, self.energy_map.map, self.move_cost, self.nebula_drain)
                     self.unit_path[unit].pop(0)
 
-        all_targets = self.fragment_targets + self.relic_targets + self.explore_targets
-        release_count = len(all_targets)
+
+        #release_count = len(all_targets)
         for unit in available_unit_ids.copy():
-            pos = unit_positions[unit]
+            pos = [int(unit_positions[unit][0]), int(unit_positions[unit][1])]
             #print("before ", pos, unit, self.unit_has_target[unit], self.unit_targets[unit], self.unit_path[unit])
             # set moved flag necessary for kill detection
             if not self.compare_positions(pos, self.start_pos):
@@ -371,12 +383,15 @@ class Agent():
                 self.unit_has_target[unit] = 2
                 self.unit_targets[unit] = pos
                 self.unit_path[unit] = []
-                self.occupied_fragments.append([pos[0], pos[1]])
+                self.occupied_fragments.append([int(pos[0]), int(pos[1])])
                 remain_units = available_unit_ids.copy()
                 remain_units.remove(unit)
                 for unit2 in remain_units:
                     if self.unit_targets[unit2][0]==pos[0] and self.unit_targets[unit2][1]==pos[1] and self.unit_has_target[unit]!=3:
                         self.unit_has_target[unit2] = -1
+            # remove target if possible fragment has been cleared (by other unit)
+            if self.unit_has_target[unit]==1 and self.relic_map.map_possibles[self.unit_targets[unit][0], self.unit_targets[unit][1]]==0 and self.relic_map.map_knowns[self.unit_targets[unit][0], self.unit_targets[unit][1]]!=1:
+                self.unit_has_target[unit] = -1
             # retarget def units
             if self.unit_has_target[unit]==3 and self.compare_positions(self.unit_targets[unit],pos):
                 if self.fragment_locations:
@@ -411,7 +426,7 @@ class Agent():
                 if not self.compare_positions(pos, self.unit_targets[unit]):
                     self.free_target(unit, pos)
             # if unit has possible or known as target or no energy remove from available
-            if self.unit_has_target[unit]>-1 or unit_energys[unit]<self.move_cost:
+            if self.unit_has_target[unit]==2 or unit_energys[unit]<self.move_cost:
                 #print("remove unit", unit)
                 available_unit_ids.remove(unit)
             if unit_energys[unit]<self.move_cost and not self.compare_positions(pos, self.unit_targets[unit]):
@@ -420,24 +435,48 @@ class Agent():
             # if unit is available set path to nothing
             #if self.unit_has_target[unit]==-1:
             #    self.unit_path[unit] = []
-
+            
+        self.fragment_targets = self.relic_map.get_fragments(self.start_pos, own=True)
+        self.relic_targets = self.relic_map.get_possibles(self.start_pos, own=True)
+        #print(self.occupied_fragments, self.fragment_targets)
+        for f in self.fragment_targets.copy():
+            if self.tile_map.map[f[0],f[1]]==2 or f in self.occupied_fragments:
+                self.fragment_targets.remove(f)
+                #print(f, " removed")
+        for r in self.relic_targets.copy():
+            if self.tile_map.map[r[0],r[1]]==2:
+                self.relic_targets.remove(r)
+        #print(self.occupied_fragments, self.fragment_targets)
         #print(available_unit_ids)
         # send available units to fragments, possibles, explore targets
-        all_targets = self.fragment_targets + self.relic_targets + self.explore_targets
+        positions = []
+        for u in available_unit_ids:
+            positions.append(unit_positions[u])
+        #print(self.sort_targets(self.fragment_targets, positions))
+        #print(step)
+        #print(self.fragment_targets)
+        #print(self.sort_targets(self.relic_targets, positions))
+        #print(self.relic_targets)
+        all_targets = self.sort_targets(self.fragment_targets, positions) + self.sort_targets(self.relic_targets, positions) + self.explore_targets
         target_type = [2 for i in range(len(self.fragment_targets))] + [1 for i in range(len(self.relic_targets))] + [0 for i in range(len(self.explore_targets))]
+        #print(all_targets)
         for ii, goal in enumerate(all_targets):
             if available_unit_ids:
                 unit, path = self.find_best_unit(goal, available_unit_ids, unit_positions)
                 available_unit_ids.remove(unit)
+                self.free_target(unit, unit_positions[unit])
                 self.unit_path[unit] = path[1:]
                 self.unit_has_target[unit] = target_type[ii]
                 self.unit_targets[unit] = goal
+                #try:
                 if target_type[ii]==2:
                     self.fragment_targets.remove(goal)
                 if target_type[ii]==1:
                     self.relic_targets.remove(goal)
                 if target_type[ii]==0:
                     self.explore_targets.remove(goal)
+                #except:
+                #print(target_type[ii], goal, self.fragment_targets, self.relic_targets, self.explore_targets)
         
         # only keep targets that aren't exploring
         for unit in available_unit_ids.copy():
@@ -483,7 +522,7 @@ class Agent():
                         path, _ = a_star(unit_pos, self.unit_targets[unit], self.tile_map.map, self.energy_map.map, self.move_cost, self.nebula_drain)
                         self.unit_path[unit] = path[1:]
                         break
-                if (self.unit_has_target[unit]==3) and self.get_enemy_targets(unit_pos.tolist(), enemy_positions):
+                if unit_energys[unit]>self.sap_cost and (self.unit_has_target[unit]==3 or (self.unit_has_target[unit]==2 and self.energy_map.map[unit_pos[0],unit_pos[1]]>0)) and self.get_enemy_targets(unit_pos.tolist(), enemy_positions):
                     targets = self.get_enemy_targets(unit_pos.tolist(), enemy_positions, relative=False)
                     aim = self.preaim(targets[0])
                     actions[unit]=[5,aim[0]-unit_pos[0],aim[1]-unit_pos[1]]
@@ -493,7 +532,11 @@ class Agent():
                     elif self.unit_path[unit]:
                         if self.relic_map.map_possibles[self.unit_path[unit][0][0],self.unit_path[unit][0][1]]==1:
                             if discover_flag:
-                                actions[unit]=[0,0,0]
+                                if self.relic_map.map_possibles[unit_pos[0],unit_pos[1]]==1:
+                                    actions[unit] = self.relic_map.move_away(self.tile_map.map, [unit_pos[0],unit_pos[1]])
+                                    self.unit_path[unit].insert(0, unit_pos)
+                                else:
+                                    actions[unit]=[0,0,0]
                             else:
                                 actions[unit] = [direction_to(unit_pos, self.unit_path[unit].pop(0)), 0, 0]
                                 discover_flag=1
@@ -502,13 +545,20 @@ class Agent():
                     else:
                         if self.relic_map.map_possibles[unit_pos[0],unit_pos[1]]==1:
                             if discover_flag:
-                                actions[unit] = self.relic_map.move_away([unit_pos[0],unit_pos[1]])
+                                actions[unit] = self.relic_map.move_away(self.tile_map.map, [unit_pos[0],unit_pos[1]])
+                                self.unit_path[unit].insert(0, unit_pos)
                             else:
                                 actions[unit]=[0,0,0]
                                 discover_flag = 1
                         else:
                             actions[unit]=[0,0,0]
-        #print("Step: ", step, "\n", self.unit_has_target, "\n", self.unit_targets, "\n", self.unit_path, "\n", actions)
+        '''print("Step: ", step, "\n", self.unit_has_target, "\n", self.unit_targets, "\n", self.unit_path, "\n", actions)
+        plt.imshow(self.relic_map.map_possibles.T)
+        plt.show()
+        plt.imshow(self.relic_map.map_confidence.T)
+        plt.show()
+        plt.imshow(self.relic_map.map_knowns.T)
+        plt.show()'''
         self.previous_energys = unit_energys
         self.relic_map.map_occupied = np.zeros((24,24))
         self.prev_points = team_points[self.team_id]
