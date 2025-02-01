@@ -202,6 +202,7 @@ class EnergyMap():
                 if (mask*current==mask*m).all():
                     self.map = m
                     break
+        return shift
                     
         
         
