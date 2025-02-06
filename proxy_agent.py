@@ -35,7 +35,7 @@ class ProxyEnvironment(gym.Env):
         ))
         self.param_space = MultiDiscrete(np.array([505, 1000, 16*400]))
         self.observation_space = Tuple((self.map_space, self.param_space))
-        self.action_space = MultiDiscrete(np.array([5 for i in range(16)]))
+        self.action_space = MultiDiscrete(np.array([24 for i in range(32)]))
 
 class ProxyAgent():
     def __init__(self, player: str, env_cfg, model_name=None) -> None:
@@ -270,58 +270,20 @@ class ProxyAgent():
         
         
     def proxy_to_act(self, proxy_action):
-        #print(proxy_action)
-        proxy_action = proxy_action.squeeze().cpu().detach().numpy()
+        if torch.is_tensor(proxy_action):
+            proxy_action = proxy_action.squeeze().cpu().detach().numpy()
+        #print(self.available_unit_ids)
         actions = np.zeros((self.n_units, 3), dtype=int)
         for unit in self.available_unit_ids:
-            '''if proxy_action[unit][0]!=5:
-                self.unit_targets[unit] = [proxy_action[unit][1]],proxy_action[unit][2]
-                if not self.compare_positions(self.unit_targets[unit], self.unit_targets_previous[unit]):
-                    path, _ = a_star(unit_positions[unit], self.unit_targets[unit], self.tile_map.map, self.energy_map.map, self.relic_map.map_knowns, self.move_cost, self.nebula_drain, use_energy=False)
-                    self.unit_path[unit] = path[1:]
-                direction = direction_to(self.unit_positions[unit], self.unit_targets[unit])
-                change = direction_to_change(direction)
-                self.unit_path[unit] = [self.unit_positions[unit][0]+change[0],self.unit_positions[unit][1]+change[1]]'''
-            actions[unit] = [proxy_action[unit], 0, 0]
-                    
-        '''discover_flag = 0
-        # Decide on action. Follow path, if multiple units want to move to possible fragment only let one through, if attacking fire on enemy instead of moving
-        for unit in self.available_unit_ids:
-            unit_pos = self.unit_positions[unit]
-            self.bunnyhop(unit, self.unit_positions)
-            
-        for unit in self.available_unit_ids:
-            unit_pos = self.unit_positions[unit]
-            if False:
-                pass
-            #if proxy_action[unit][0]==5:
-            #    actions[unit] = [5,unit_pos[0]-proxy_action[unit][1],unit_pos[1]-proxy_action[unit][2]]
-            else:
-                if self.unit_energys[unit]<self.move_cost:
-                    actions[unit]=[0,0,0]
-                elif self.unit_path[unit]:
-                    if self.relic_map.map_possibles[self.unit_path[unit][0][0],self.unit_path[unit][0][1]]==1:
-                        if discover_flag:
-                            if self.relic_map.map_possibles[unit_pos[0],unit_pos[1]]==1:
-                                actions[unit] = self.relic_map.move_away(self.tile_map.map, [unit_pos[0],unit_pos[1]])
-                                self.unit_path[unit].insert(0, unit_pos)
-                            else:
-                                actions[unit]=[0,0,0]
-                        else:
-                            actions[unit] = [direction_to(unit_pos, self.unit_path[unit].pop(0)), 0, 0]
-                            discover_flag=1
-                    else:
-                        actions[unit] = [direction_to(unit_pos, self.unit_path[unit].pop(0)), 0, 0]
-                else:
-                    if self.relic_map.map_possibles[unit_pos[0],unit_pos[1]]==1:
-                        if discover_flag:
-                            actions[unit] = self.relic_map.move_away(self.tile_map.map, [unit_pos[0],unit_pos[1]])
-                            self.unit_path[unit].insert(0, unit_pos)
-                        else:
-                            actions[unit]=[0,0,0]
-                            discover_flag = 1
-                    else:
-                        actions[unit]=[0,0,0]'''
+            self.unit_targets[unit] = [proxy_action[unit],proxy_action[unit+16]]
+            '''if not self.compare_positions(self.unit_targets[unit], self.unit_targets_previous[unit]):
+                path, _ = a_star(unit_positions[unit], self.unit_targets[unit], self.tile_map.map, self.energy_map.map, self.relic_map.map_knowns, self.move_cost, self.nebula_drain, use_energy=False)
+                self.unit_path[unit] = path[1:]'''
+            direction = direction_to(self.unit_positions[unit], self.unit_targets[unit])
+            change = direction_to_change(direction)
+            self.unit_path[unit] = [self.unit_positions[unit][0]+change[0],self.unit_positions[unit][1]+change[1]]
+            actions[unit] = [direction, 0, 0]
+
         self.prev_actions = actions
         self.unit_targets_previous = self.unit_targets
         return actions
@@ -337,21 +299,23 @@ class ActorCritic(nn.Module):
     def __init__(self, env):
         super().__init__()
         self.n_ens = env.observation_space[1].shape[0]
-        n_maps = len(env.single_observation_space[0])
-        n_state_params = env.single_observation_space[1].shape[0]
+        self.n_maps = len(env.single_observation_space[0])
+        self.n_state_params = env.single_observation_space[1].shape[0]
+        self.n_action = env.single_action_space.shape[0]
+        self.action_dim = env.single_action_space.nvec[0]
         self.map_to_hidden = nn.Sequential(
-            nn.Conv2d(n_maps, 12, kernel_size=3, padding=1),
+            nn.Conv2d(self.n_maps, 12, kernel_size=1, padding=0),
             nn.ReLU(),
-            nn.MaxPool2d(2),
-            nn.Conv2d(12, 6, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
+            #nn.MaxPool2d(2),
+            nn.Conv2d(12, 6, kernel_size=1, padding=0),
+            #nn.ReLU(),
+            #nn.MaxPool2d(2),
             nn.Flatten(),
-            layer_init(nn.Linear(6*6*6, 128)),
+            layer_init(nn.Linear(24*24*6, 128)),
             nn.ReLU()
         )
         self.state_params_to_hidden = nn.Sequential(
-            layer_init(nn.Linear(n_state_params, 64)),
+            layer_init(nn.Linear(self.n_state_params, 64)),
             nn.ReLU(),
         )
         self.map_and_state_params_combine = nn.Sequential(
@@ -362,7 +326,7 @@ class ActorCritic(nn.Module):
         self.actor = nn.Sequential(
             layer_init(nn.Linear(64, 128)),
             nn.ReLU(),
-            layer_init(nn.Linear(128, 16*5)),
+            layer_init(nn.Linear(128, self.n_action*self.action_dim)),
             nn.ReLU(),
         )
 
@@ -383,7 +347,7 @@ class ActorCritic(nn.Module):
 
     def get_action_and_value(self, x, action=None):
         x = self.combine(x)
-        logits = self.actor(x).reshape(x.shape[0], 16,5)
+        logits = self.actor(x).reshape(x.shape[0], self.n_action,self.action_dim)
         #print(logits)
         probs = Categorical(logits=logits)
         if action is None:
