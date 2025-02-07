@@ -33,9 +33,12 @@ class ProxyEnvironment(gym.Env):
             MultiDiscrete(np.full((24,24),24)),
             MultiDiscrete(np.full((24,24),24)),
         ))
+        self.unit_param_space = MultiDiscrete(np.repeat(np.expand_dims(np.array([24,24,401,11,2]),0),16,axis=0),
+                                              start=np.repeat(np.expand_dims(np.array([0,0,0,-10,0]),0),16,axis=0))
         self.param_space = MultiDiscrete(np.array([505, 1000, 16*400]))
-        self.observation_space = Tuple((self.map_space, self.param_space))
-        self.action_space = MultiDiscrete(np.array([24 for i in range(32)]))
+        self.observation_space = Tuple((self.map_space, self.param_space, self.unit_param_space))
+        #print(self.observation_space)
+        self.action_space = MultiDiscrete(np.repeat(np.expand_dims(np.array([2,24,24,24,24]),0),16,axis=0))
 
 class ProxyAgent():
     def __init__(self, player: str, env_cfg, model_name=None) -> None:
@@ -170,7 +173,7 @@ class ProxyAgent():
             return 0
 
     def get_init_proxy_obs(self, obs):
-         return (np.array([np.zeros((24,24),dtype=int) for i in range(6)]),np.array([0,0,0]))
+         return (np.array([np.zeros((24,24),dtype=int) for i in range(6)]),np.array([0,0,0]), np.zeros((self.n_units,5),dtype=int))
      
     def step(self, obs, step):
         reward = 0
@@ -257,13 +260,23 @@ class ProxyAgent():
         energy[self.tile_map.map==1] = energy[self.tile_map.map==1] - self.nebula_drain
         my_unit_map = self.positions_to_map(self.unit_positions)
         enemy_unit_map = self.positions_to_map(self.enemy_positions)
-        proxy_obs = (np.array([tiles, energy, self.relic_map.map_possibles, self.relic_map.map_knowns, my_unit_map, enemy_unit_map]), 
-                     np.array([step, diff, np.sum(self.unit_energys)]))
+        on_known = np.zeros((self.n_units,1))
+        tile_energys = np.zeros((self.n_units,1))
+        for ii, p in enumerate(self.unit_positions):
+            if self.relic_map.map_knowns[p[0],p[1]]==1:
+                on_known[ii] = 1
+            tile_energys[ii] = energy[p[0],p[1]]
+                
+
+        proxy_obs = (np.array([tiles.astype(int), energy.astype(int), self.relic_map.map_possibles.astype(int), self.relic_map.map_knowns.astype(int), my_unit_map.astype(int), enemy_unit_map.astype(int)]), 
+                     np.array([step, diff, np.sum(self.unit_energys)]), 
+                     np.concatenate((np.array(self.unit_positions).astype(int), np.expand_dims(self.unit_energys,-1).astype(int), tile_energys.astype(int), on_known.astype(int)), axis=-1))
+       # print(self.available_unit_ids)
         return proxy_obs, reward
         
     def act(self, obs, step):
         proxy_obs, _ = self.step(obs, step)
-        proxy_obs = (torch.tensor(proxy_obs[0]).to(torch.float32).unsqueeze(0),torch.tensor(proxy_obs[1]).to(torch.float32).unsqueeze(0))
+        proxy_obs = (torch.tensor(proxy_obs[0]).to(torch.float32).unsqueeze(0),torch.tensor(proxy_obs[1]).to(torch.float32).unsqueeze(0),torch.tensor(proxy_obs[2]).to(torch.float32).unsqueeze(0))
         proxy_action,_ ,_ ,_ = self.model.get_action_and_value(proxy_obs)
         return self.proxy_to_act(proxy_action)
         
@@ -272,17 +285,19 @@ class ProxyAgent():
     def proxy_to_act(self, proxy_action):
         if torch.is_tensor(proxy_action):
             proxy_action = proxy_action.squeeze().cpu().detach().numpy()
-        #print(self.available_unit_ids)
         actions = np.zeros((self.n_units, 3), dtype=int)
         for unit in self.available_unit_ids:
-            self.unit_targets[unit] = [proxy_action[unit],proxy_action[unit+16]]
-            '''if not self.compare_positions(self.unit_targets[unit], self.unit_targets_previous[unit]):
-                path, _ = a_star(unit_positions[unit], self.unit_targets[unit], self.tile_map.map, self.energy_map.map, self.relic_map.map_knowns, self.move_cost, self.nebula_drain, use_energy=False)
-                self.unit_path[unit] = path[1:]'''
-            direction = direction_to(self.unit_positions[unit], self.unit_targets[unit])
-            change = direction_to_change(direction)
-            self.unit_path[unit] = [self.unit_positions[unit][0]+change[0],self.unit_positions[unit][1]+change[1]]
-            actions[unit] = [direction, 0, 0]
+            if proxy_action[unit,0]==1:
+                actions[unit] = [5, proxy_action[unit,3], proxy_action[unit,4]]
+            else:
+                self.unit_targets[unit] = [proxy_action[unit,1],proxy_action[unit,2]]
+                '''if not self.compare_positions(self.unit_targets[unit], self.unit_targets_previous[unit]):
+                    path, _ = a_star(unit_positions[unit], self.unit_targets[unit], self.tile_map.map, self.energy_map.map, self.relic_map.map_knowns, self.move_cost, self.nebula_drain, use_energy=False)
+                    self.unit_path[unit] = path[1:]'''
+                direction = direction_to(self.unit_positions[unit], self.unit_targets[unit])
+                change = direction_to_change(direction)
+                self.unit_path[unit] = [self.unit_positions[unit][0]+change[0],self.unit_positions[unit][1]+change[1]]
+                actions[unit] = [direction, 0, 0]
 
         self.prev_actions = actions
         self.unit_targets_previous = self.unit_targets
@@ -294,7 +309,6 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
     return layer
 
 
-# TODO network design
 class ActorCritic(nn.Module):
     def __init__(self, env):
         super().__init__()
@@ -302,54 +316,157 @@ class ActorCritic(nn.Module):
         self.n_maps = len(env.single_observation_space[0])
         self.n_state_params = env.single_observation_space[1].shape[0]
         self.n_action = env.single_action_space.shape[0]
-        self.action_dim = env.single_action_space.nvec[0]
-        self.map_to_hidden = nn.Sequential(
-            nn.Conv2d(self.n_maps, 12, kernel_size=1, padding=0),
-            nn.ReLU(),
-            #nn.MaxPool2d(2),
-            nn.Conv2d(12, 6, kernel_size=1, padding=0),
-            #nn.ReLU(),
-            #nn.MaxPool2d(2),
-            nn.Flatten(),
-            layer_init(nn.Linear(24*24*6, 128)),
-            nn.ReLU()
-        )
+        self.action_dim = env.single_action_space.nvec[-1,-1]
+        self.n_unit_states = env.single_observation_space[2].shape[1]
+        
         self.state_params_to_hidden = nn.Sequential(
-            layer_init(nn.Linear(self.n_state_params, 64)),
+            layer_init(nn.Linear(self.n_state_params, 32)),
+            nn.ReLU(),
+            layer_init(nn.Linear(32, 8)),
             nn.ReLU(),
         )
-        self.map_and_state_params_combine = nn.Sequential(
-            layer_init(nn.Linear(128 + 64, 64)),
+        self.embedding_maps = nn.Sequential(
+            layer_init(nn.Linear(self.n_maps, 16)),
+            layer_init(nn.Linear(16, 8)),
+        )
+        self.embedding_unit_params = nn.Sequential(
+            layer_init(nn.Linear(self.n_unit_states, 16)),
+            layer_init(nn.Linear(16, 8)),
+        )
+        self.encoder = torch.nn.TransformerEncoderLayer(8,4,64, batch_first=True)
+        self.decoder = torch.nn.TransformerDecoderLayer(8,4,64, batch_first=True)
+        self.out_to_logits = nn.Sequential(
+            layer_init(nn.Linear(16, 32)),
+            nn.ReLU(),
+            layer_init(nn.Linear(32, 2+4*24)),
             nn.ReLU(),
         )
         
-        self.actor = nn.Sequential(
-            layer_init(nn.Linear(64, 128)),
-            nn.ReLU(),
-            layer_init(nn.Linear(128, self.n_action*self.action_dim)),
+        self.encoder_out_to_critic = nn.Sequential(
+            layer_init(nn.Linear(8, 1)),
             nn.ReLU(),
         )
 
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(64, 16)),
+            layer_init(nn.Linear(576 + 8, 16)),
             nn.ReLU(),
             layer_init(nn.Linear(16, 1)),
         )
+    
+    def get_value(self, x):
+        maps, state_params, unit_params = x
+        maps = torch.flatten(maps,start_dim=-2).permute(0,2,1)
+        encoder_out = self.encoder(self.embedding_maps(maps)) # B x 576 x 16
+        state_params_hidden = self.state_params_to_hidden(state_params) # B x 8
+        encoder_out_critic = self.encoder_out_to_critic(encoder_out).squeeze(dim=-1)
+        value = self.critic(torch.cat((encoder_out_critic, state_params_hidden),dim=-1))
+        return value
 
-    def combine(self, x):
-        maps, state_params = x
-        map_hidden = self.map_to_hidden(maps)
-        state_params_hidden = self.state_params_to_hidden(state_params)
-        return self.map_and_state_params_combine(torch.cat((map_hidden, state_params_hidden), dim=-1))
+    def get_action_and_value(self, x, action=None):
+        maps, state_params, unit_params = x
+        maps = torch.flatten(maps,start_dim=-2).permute(0,2,1)
+        batch_size, n_units = unit_params.shape[0], unit_params.shape[1] # B, N
+        encoder_out = self.encoder(self.embedding_maps(maps)) # B x 576 x 16
+        decoder_out = self.decoder(self.embedding_unit_params(unit_params), encoder_out) # B x N x 16
+        state_params_hidden = self.state_params_to_hidden(state_params) # B x 8
+        decoder_out_state_params_combined = torch.cat((decoder_out, torch.stack([state_params_hidden for i in range(n_units)],dim=1)),dim=-1) # B x N x 24
+        all_logits = self.out_to_logits(decoder_out_state_params_combined) # B x N x 2+4*24
+        
+        move_type_logits = all_logits[:,:,:2].reshape(batch_size, n_units, 1, 2) # B x N x 1 x 2
+        target_logits = all_logits[:,:,2:].reshape(batch_size, n_units, 4, self.action_dim) # B x N x 4 x 24
+        move_type_probs = Categorical(logits=move_type_logits)
+        target_probs = Categorical(target_logits)
+
+        encoder_out_critic = self.encoder_out_to_critic(encoder_out).squeeze(dim=-1)
+        #print(encoder_out_critic.shape, state_params_hidden.shape)
+        value = self.critic(torch.cat((encoder_out_critic, state_params_hidden),dim=-1))
+        
+        if action is None:
+            action_type = move_type_probs.sample()
+            action_target = target_probs.sample()
+            action = torch.cat((action_type,action_target),dim=-1) # B x N x 5
+        else:
+            action_type = action[:,:,0].unsqueeze(dim=-1)
+            action_target = action[:,:,1:]
+        probs = torch.cat((move_type_probs.log_prob(action_type), target_probs.log_prob(action_target)),dim=-1) # B x N x 5
+        #print(probs.shape)
+        return action, probs, move_type_probs.entropy() + target_probs.entropy(), value
+
+## NOT DONE
+class ActorCritic2(nn.Module):
+    def __init__(self, env):
+        super().__init__()
+        self.n_ens = env.observation_space[1].shape[0]
+        self.n_maps = len(env.single_observation_space[0])
+        self.n_state_params = env.single_observation_space[1].shape[0]
+        self.n_action = env.single_action_space.shape[0]
+        self.action_dim = env.single_action_space.nvec[0]
+        self.n_unit_states = env.single_observation_space[2].shape[0]
+        
+        self.state_params_to_hidden = nn.Sequential(
+            layer_init(nn.Linear(self.n_state_params, 64)),
+            nn.ReLU(),
+            layer_init(nn.Linear(64, 8)),
+            nn.ReLU(),
+        )
+        self.embedding_maps = nn.Sequential(
+            layer_init(nn.Linear(self.n_maps, 32)),
+            layer_init(nn.Linear(32, 16)),
+        )
+        self.embedding_unit_params = nn.Sequential(
+            layer_init(nn.Linear(self.n_unit_states, 32)),
+            layer_init(nn.Linear(32, 16)),
+        )
+        self.encoder = torch.nn.TransformerEncoderLayer(16,4,128)
+        self.decoder = torch.nn.TransformerDecoderLayer(16,4,128)
+        self.out_to_logits = nn.Sequential(
+            layer_init(nn.Linear(24, 32)),
+            nn.ReLU(),
+            layer_init(nn.Linear(32, 2+4*24)),
+            nn.ReLU(),
+        )
+        
+        self.encoder_out_to_critic = nn.Sequential(
+            layer_init(nn.Linear(16, 1)),
+            nn.ReLU(),
+        )
+
+        self.critic = nn.Sequential(
+            layer_init(nn.Linear(576 + 8, 64)),
+            nn.ReLU(),
+            layer_init(nn.Linear(64, 1)),
+        )
     
     def get_value(self, x):
         return self.critic(self.combine(x))
 
     def get_action_and_value(self, x, action=None):
-        x = self.combine(x)
-        logits = self.actor(x).reshape(x.shape[0], self.n_action,self.action_dim)
-        #print(logits)
-        probs = Categorical(logits=logits)
+        maps, state_params, unit_params = x
+        batch_size, n_units = unit_params.shape[0], unit_params.shape[1] # B, N
+        encoder_out = self.encoder(self.self.embedding_maps(maps)) # B x 576 x 16
+        decoder_out = self.decoder(self.embedding_unit_params(unit_params), encoder_out) # B x N x 16
+        state_params_hidden = self.state_params_to_hidden(state_params) # B x 8
+        decoder_out_state_params_combined = torch.cat((decoder_out, torch.stack([state_params_hidden for i in range(n_units)],dim=1)),dim=-1) # B x N x 24
+        all_logits = self.out_to_logits(decoder_out_state_params_combined) # B x N x 2+4*24
+        
+        move_type_logits = all_logits[:,:,:2].reshape(batch_size, n_units, 1, 2) # B x N x 1 x 2
+        target_logits = all_logits[:,:,2:].reshape(batch_size, n_units, 4, self.action_dim) # B x N x 4 x 24
+        move_type_probs = Categorical(logits=move_type_logits)
+        target_probs = Categorical(logitstarget_logits)
+
+        encoder_out_critic = self.encoder_out_to_critic(encoder_out).squeeze()
+        value = self.critic(torch.cat(encoder_out_critic, state_params_hidden),dim=-1)
+        
         if action is None:
-            action = probs.sample()
-        return action, probs.log_prob(action), probs.entropy(), self.critic(x)
+            action_type = move_type_probs.sample()
+            action_target = target_probs.sample()
+            action = torch.cat((action_type,action_target),dim=-1) # B x N x 5
+        #probs = torch.cat((move_type_probs.log_prob(action_type).reshape((batch_size, n_units, 2)),
+                          #target_probs.log_prob(action_target).reshape((batch_size, n_units, 4*24))),dim=-1) # B x N x 2+4*24
+        probs = torch.cat((move_type_probs.log_prob(action_type), target_probs.log_prob(action_target)),dim=-1) # B x N x 5
+        return action, probs, move_type_probs.entropy() + target_probs.entropy(), value
+
+
+
+
+        
