@@ -25,6 +25,8 @@ class ProxyEnvironment(gym.Env):
     def __init__(self):
         self.n_maps = 6
         self.n_state_params = 3
+        self.transformer_embedding_dim = 8
+        self.state_param_embedding_dim = 8
         self.map_space = Tuple((
             MultiDiscrete(np.full((24,24),24)),
             MultiDiscrete(np.full((24,24),24)),
@@ -33,8 +35,8 @@ class ProxyEnvironment(gym.Env):
             MultiDiscrete(np.full((24,24),24)),
             MultiDiscrete(np.full((24,24),24)),
         ))
-        self.unit_param_space = MultiDiscrete(np.repeat(np.expand_dims(np.array([24,24,401,11,2]),0),16,axis=0),
-                                              start=np.repeat(np.expand_dims(np.array([0,0,0,-10,0]),0),16,axis=0))
+        self.unit_param_space = MultiDiscrete(np.repeat(np.expand_dims(np.array([24,24,24,24,401,11,2]),0),16,axis=0),
+                                              start=np.repeat(np.expand_dims(np.array([0,0,0,0,0,-10,0]),0),16,axis=0))
         self.param_space = MultiDiscrete(np.array([505, 1000, 16*400]))
         self.observation_space = Tuple((self.map_space, self.param_space, self.unit_param_space))
         #print(self.observation_space)
@@ -84,7 +86,7 @@ class ProxyAgent():
         self.prev_points = 0
         self.prev_point_diff = 0
         self.prev_points_increase = 0
-        self.prev_actions = None
+        self.prev_actions = np.zeros((self.env_cfg["max_units"], 5), dtype=int)
         self.previous_energys = 100*np.zeros((self.n_units))
         self.previous_positions = -np.ones((self.n_units,2))
         envs = gym.vector.SyncVectorEnv([env_fn for i in range(1)],)
@@ -133,7 +135,7 @@ class ProxyAgent():
         self.prev_points = 0
         self.prev_point_diff = 0
         self.prev_points_increase = 0
-        self.prev_actions = np.zeros((self.env_cfg["max_units"], 3), dtype=int)
+        self.prev_actions = np.zeros((self.env_cfg["max_units"], 5), dtype=int)
         self.prev_energys = 100*np.ones((self.n_units))
         self.previous_positions = -np.ones((self.n_units,2))
 
@@ -173,7 +175,7 @@ class ProxyAgent():
             return 0
 
     def get_init_proxy_obs(self, obs):
-         return (np.array([np.zeros((24,24),dtype=int) for i in range(6)]),np.array([0,0,0]), np.zeros((self.n_units,5),dtype=int))
+         return (np.array([np.zeros((24,24),dtype=int) for i in range(6)]),np.array([0,0,0]), np.zeros((self.n_units,7),dtype=int))
      
     def step(self, obs, step):
         reward = 0
@@ -270,7 +272,7 @@ class ProxyAgent():
 
         proxy_obs = (np.array([tiles.astype(int), energy.astype(int), self.relic_map.map_possibles.astype(int), self.relic_map.map_knowns.astype(int), my_unit_map.astype(int), enemy_unit_map.astype(int)]), 
                      np.array([step, diff, np.sum(self.unit_energys)]), 
-                     np.concatenate((np.array(self.unit_positions).astype(int), np.expand_dims(self.unit_energys,-1).astype(int), tile_energys.astype(int), on_known.astype(int)), axis=-1))
+                     np.concatenate((np.array(self.unit_positions).astype(int), np.array(list(self.unit_targets.values())).astype(int), np.expand_dims(self.unit_energys,-1).astype(int), tile_energys.astype(int), on_known.astype(int)), axis=-1))
        # print(self.available_unit_ids)
         return proxy_obs, reward
         
@@ -285,6 +287,8 @@ class ProxyAgent():
     def proxy_to_act(self, proxy_action):
         if torch.is_tensor(proxy_action):
             proxy_action = proxy_action.squeeze().cpu().detach().numpy()
+
+        #print(proxy_action)
         actions = np.zeros((self.n_units, 3), dtype=int)
         for unit in self.available_unit_ids:
             if proxy_action[unit,0]==1:
@@ -318,25 +322,34 @@ class ActorCritic(nn.Module):
         self.n_action = env.single_action_space.shape[0]
         self.action_dim = env.single_action_space.nvec[-1,-1]
         self.n_unit_states = env.single_observation_space[2].shape[1]
+        self.transformer_embedding_dim = env.get_attr("transformer_embedding_dim")[0]
+        self.state_param_embedding_dim = env.get_attr("state_param_embedding_dim")[0]
+        #self.transformer_embedding_dim = env[0].transformer_embedding_dim
         
         self.state_params_to_hidden = nn.Sequential(
             layer_init(nn.Linear(self.n_state_params, 32)),
             nn.ReLU(),
-            layer_init(nn.Linear(32, 8)),
+            layer_init(nn.Linear(32, self.state_param_embedding_dim)),
             nn.ReLU(),
         )
+        
         self.embedding_maps = nn.Sequential(
             layer_init(nn.Linear(self.n_maps, 16)),
-            layer_init(nn.Linear(16, 8)),
+            layer_init(nn.Linear(16, self.transformer_embedding_dim)),
         )
+        
         self.embedding_unit_params = nn.Sequential(
             layer_init(nn.Linear(self.n_unit_states, 16)),
-            layer_init(nn.Linear(16, 8)),
+            layer_init(nn.Linear(16, self.transformer_embedding_dim)),
         )
-        self.encoder = torch.nn.TransformerEncoderLayer(8,4,64, batch_first=True)
-        self.decoder = torch.nn.TransformerDecoderLayer(8,4,64, batch_first=True)
+        
+        self.actor_encoder = torch.nn.TransformerEncoderLayer(self.transformer_embedding_dim,4,64, batch_first=True)
+        self.actor_decoder = torch.nn.TransformerDecoderLayer(self.transformer_embedding_dim,4,64, batch_first=True)
+        
+        self.critic_encoder = torch.nn.TransformerEncoderLayer(self.transformer_embedding_dim,4,64, batch_first=True)
+        self.critic_decoder = torch.nn.TransformerDecoderLayer(self.transformer_embedding_dim,4,64, batch_first=True)
         self.out_to_logits = nn.Sequential(
-            layer_init(nn.Linear(16, 32)),
+            layer_init(nn.Linear(self.transformer_embedding_dim+self.state_param_embedding_dim, 32)),
             nn.ReLU(),
             layer_init(nn.Linear(32, 2+4*24)),
             nn.ReLU(),
@@ -347,27 +360,41 @@ class ActorCritic(nn.Module):
             nn.ReLU(),
         )
 
-        self.critic = nn.Sequential(
-            layer_init(nn.Linear(576 + 8, 16)),
+        self.critic_out_old = nn.Sequential(
+            layer_init(nn.Linear(self.transformer_embedding_dim, 32)),
             nn.ReLU(),
-            layer_init(nn.Linear(16, 1)),
+            layer_init(nn.Linear(32, 1)),
         )
-    
+        self.critic_out = nn.Sequential(
+            layer_init(nn.Linear(self.n_unit_states, 32)),
+            nn.ReLU(),
+            layer_init(nn.Linear(32, 1)),
+        )
+        
+
+    def critic_old(self, maps, unit_params):
+        encoder_out = self.critic_encoder(self.embedding_maps(maps)) # B x 576 x 8
+        decoder_out = self.critic_decoder(self.embedding_unit_params(unit_params), encoder_out) # B x N x 8
+        return torch.sum(self.critic_out_old(decoder_out).squeeze(), dim=-1)
+
+    def critic(self, maps, unit_params):
+        return torch.sum(self.critic_out(unit_params).squeeze(), dim=-1)
+        
+        
     def get_value(self, x):
         maps, state_params, unit_params = x
         maps = torch.flatten(maps,start_dim=-2).permute(0,2,1)
-        encoder_out = self.encoder(self.embedding_maps(maps)) # B x 576 x 16
-        state_params_hidden = self.state_params_to_hidden(state_params) # B x 8
-        encoder_out_critic = self.encoder_out_to_critic(encoder_out).squeeze(dim=-1)
-        value = self.critic(torch.cat((encoder_out_critic, state_params_hidden),dim=-1))
+        value = self.critic(maps, unit_params)
         return value
 
     def get_action_and_value(self, x, action=None):
         maps, state_params, unit_params = x
         maps = torch.flatten(maps,start_dim=-2).permute(0,2,1)
         batch_size, n_units = unit_params.shape[0], unit_params.shape[1] # B, N
-        encoder_out = self.encoder(self.embedding_maps(maps)) # B x 576 x 16
-        decoder_out = self.decoder(self.embedding_unit_params(unit_params), encoder_out) # B x N x 16
+        
+        encoder_out = self.actor_encoder(self.embedding_maps(maps)) # B x 576 x 16
+        decoder_out = self.actor_decoder(self.embedding_unit_params(unit_params), encoder_out) # B x N x 16
+        
         state_params_hidden = self.state_params_to_hidden(state_params) # B x 8
         decoder_out_state_params_combined = torch.cat((decoder_out, torch.stack([state_params_hidden for i in range(n_units)],dim=1)),dim=-1) # B x N x 24
         all_logits = self.out_to_logits(decoder_out_state_params_combined) # B x N x 2+4*24
@@ -377,9 +404,7 @@ class ActorCritic(nn.Module):
         move_type_probs = Categorical(logits=move_type_logits)
         target_probs = Categorical(target_logits)
 
-        encoder_out_critic = self.encoder_out_to_critic(encoder_out).squeeze(dim=-1)
-        #print(encoder_out_critic.shape, state_params_hidden.shape)
-        value = self.critic(torch.cat((encoder_out_critic, state_params_hidden),dim=-1))
+        value = self.critic(maps, unit_params)
         
         if action is None:
             action_type = move_type_probs.sample()
@@ -389,7 +414,6 @@ class ActorCritic(nn.Module):
             action_type = action[:,:,0].unsqueeze(dim=-1)
             action_target = action[:,:,1:]
         probs = torch.cat((move_type_probs.log_prob(action_type), target_probs.log_prob(action_target)),dim=-1) # B x N x 5
-        #print(probs.shape)
         return action, probs, move_type_probs.entropy() + target_probs.entropy(), value
 
 ## NOT DONE
