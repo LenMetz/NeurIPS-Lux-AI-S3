@@ -354,7 +354,7 @@ class ProxyAgent():
     def proxy_to_act(self, proxy_action):
         if torch.is_tensor(proxy_action):
             proxy_action = proxy_action.squeeze().cpu().detach().numpy()
-        print(proxy_action)
+        #print(proxy_action)
         actions = np.zeros((self.n_units, 3), dtype=int)
         for unit in range(self.n_units):
             if proxy_action[unit,0]==1:
@@ -438,10 +438,10 @@ class Actor(nn.Module):
         )
                 
         self.cnn = nn.Sequential(
-            layer_init(nn.Conv2d(self.n_maps, 16, kernel_size=3, padding=1)),
+            layer_init(nn.Conv2d(self.n_maps, 32, kernel_size=3, padding=1)),
             nn.ReLU(),
-            layer_init(nn.Conv2d(16, 32, kernel_size=3, padding=1)),
-            nn.ReLU(),
+            #layer_init(nn.Conv2d(16, 32, kernel_size=3, padding=1)),
+            #nn.ReLU(),
             #nn.MaxPool2d(2),
             layer_init(nn.Conv2d(32, self.transformer_embedding_dim-2, kernel_size=3, padding=1)),
             nn.ReLU(),
@@ -453,22 +453,22 @@ class Actor(nn.Module):
         )
         
         self.embedding_unit_params = nn.Sequential(
-            layer_init(nn.Linear(self.n_unit_states, 16)),
-            layer_init(nn.Linear(16, self.transformer_embedding_dim)),
+            layer_init(nn.Linear(self.n_unit_states, 32)),
+            layer_init(nn.Linear(32, self.transformer_embedding_dim)),
         )
         
-        self.actor_encoder = torch.nn.TransformerEncoder(torch.nn.TransformerEncoderLayer(self.transformer_embedding_dim,4,64, batch_first=True),num_layers=2)
-        self.actor_decoder = torch.nn.TransformerDecoder(torch.nn.TransformerDecoderLayer(self.transformer_embedding_dim,4,64, batch_first=True),num_layers=2)
+        self.actor_encoder = torch.nn.TransformerEncoder(torch.nn.TransformerEncoderLayer(self.transformer_embedding_dim,1,64, batch_first=True, dropout=0.0),num_layers=2)
+        self.actor_decoder = torch.nn.TransformerDecoder(torch.nn.TransformerDecoderLayer(self.transformer_embedding_dim,1,64, batch_first=True, dropout=0.0),num_layers=2)
 
         self.out_to_logits = nn.Sequential(
-            layer_init(nn.Linear(self.transformer_embedding_dim+self.state_param_embedding_dim, 128)),
+            layer_init(nn.Linear(self.transformer_embedding_dim+self.state_param_embedding_dim, 256)),
             nn.ReLU(),
-            layer_init(nn.Linear(128, 32)),
+            layer_init(nn.Linear(256, 128)),
             nn.ReLU(),
-            layer_init(nn.Linear(32, 2+4*24)),
+            layer_init(nn.Linear(128, 2+4*24)),
         )
 
-    def get_action(self, x, action=None):
+    def get_action(self, x, action=None, verbose=0):
         maps, state_params, unit_params = x
         #maps = torch.flatten(maps,start_dim=-2).permute(0,2,1)
         batch_size, n_units = unit_params.shape[0], unit_params.shape[1] # B, N
@@ -481,12 +481,12 @@ class Actor(nn.Module):
         state_params_hidden = self.state_params_to_hidden(state_params) # B x 8
         decoder_out_state_params_combined = torch.cat((decoder_out, torch.stack([state_params_hidden for i in range(n_units)],dim=1)),dim=-1) # B x N x 24
         all_logits = self.out_to_logits(decoder_out_state_params_combined) # B x N x 2+4*24
-        
+
         move_type_logits = all_logits[:,:,:2].unsqueeze(-2) # B x N x 1 x 2
-        target_logits = all_logits[:,:,2:].reshape(batch_size, n_units, 4, self.action_dim) # B x N x 4 x 24
+        target_logits = all_logits[:,:,2:].view(batch_size, n_units, 4, self.action_dim) # B x N x 4 x 24
+        
         move_type_probs = Categorical(logits=move_type_logits)
         target_probs = Categorical(logits=target_logits)
-
         
         if action is None:
             action_type = move_type_probs.sample()
