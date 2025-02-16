@@ -36,17 +36,17 @@ class ProxyEnvironment(gym.Env):
             MultiDiscrete(np.full((24,24),24)),
             MultiDiscrete(np.full((24,24),24)),
         ))
-        self.unit_param_space = MultiDiscrete(np.repeat(np.expand_dims(np.array([2,24,24,2,24,24,24,24,401,11,2]),0),16,axis=0),
-                                              start=np.repeat(np.expand_dims(np.array([0,0,0,0,0,0,0,0,0,-10,0]),0),16,axis=0))
+        self.unit_param_space = MultiDiscrete(np.repeat(np.expand_dims(np.array([2,576,576,401,11,2]),0),16,axis=0),
+                                              start=np.repeat(np.expand_dims(np.array([0,0,0,0,-10,0]),0),16,axis=0))
         self.param_space = MultiDiscrete(np.array([2,2,2,2,2,100,100,1000, 16*400,16]))
         self.observation_space = Tuple((self.map_space, self.param_space, self.unit_param_space))
         #print(self.observation_space)
-        self.action_space = MultiDiscrete(np.repeat(np.expand_dims(np.array([2,24,24,24,24]),0),16,axis=0))
+        self.action_space = MultiDiscrete(np.repeat(np.expand_dims(np.array([2,576,576]),0),16,axis=0))
         self.current_step = 0
         self.curriculum_step = 0
 
 class ProxyAgent():
-    def __init__(self, player: str, env_cfg, cr=0, model_name=None) -> None:
+    def __init__(self, player: str, env_cfg, cr=0, model_name=None, inference=True) -> None:
         self.cr = cr
         self.player = player
         self.opp_player = "player_1" if self.player == "player_0" else "player_0"
@@ -80,7 +80,7 @@ class ProxyAgent():
         self.height = self.env_cfg["map_height"]
         
         self.unit_has_target = -np.ones((self.n_units))
-        self.unit_targets = dict(zip(range(0,self.n_units), np.zeros((self.n_units,2))))
+        self.unit_targets = np.zeros((self.n_units,2))
         self.unit_targets_previous = dict(zip(range(0,self.n_units), np.zeros((self.n_units,2))))
         self.unit_path = dict(zip(range(0,self.n_units), [[] for i in range(0,self.n_units)]))
         self.unit_energys = np.full((self.n_units),100)
@@ -90,57 +90,38 @@ class ProxyAgent():
         self.prev_points = 0
         self.prev_point_diff = 0
         self.prev_points_increase = 0
+        self.wins = 0
+        self.losses = 0
         self.prev_actions = np.zeros((self.n_units,3))
         self.prev_proxy_actions = np.zeros((self.n_units,5))
-        self.previous_energys = 100*np.zeros((self.n_units))
+        self.previous_energys = 100*np.ones((self.n_units))
         self.previous_positions = -np.ones((self.n_units,2))
-        envs = gym.vector.SyncVectorEnv([env_fn for i in range(1)],)
-        self.actor = Actor(envs)
-        self.critic = Critic(envs)
-        envs.close()
-        if model_name:
-            checkpoint = torch.load(model_name, weights_only=True)
-            self.actor.load_state_dict(checkpoint["actor"])
-            self.actor.eval()
+        if inference:
+            envs = gym.vector.SyncVectorEnv([env_fn for i in range(1)],)
+            self.actor = Actor(envs)
+            self.critic = Critic(envs)
+            envs.close()
+            if model_name:
+                checkpoint = torch.load(model_name, weights_only=True)
+                self.actor.load_state_dict(checkpoint["actor"])
+                self.actor.eval()
 
-
-    def get_explore(self, current):
-        a = np.stack((np.repeat(np.arange(24),24,axis=0).reshape((24,24)), np.repeat(np.arange(24),24,axis=0).reshape((24,24)).T),axis=2)
-        a[current!=-1] = [100,100]
-        self.explore_choices = a[np.sum(np.abs(a-np.array(self.start_pos)),axis=-1)<24-self.range].tolist()
-        if self.explore_choices:
-            return random.choice(self.explore_choices)
-        else:
-            x = np.random.randint(0,24)
-            y = np.random.randint(0,24-x)
-            return [abs(x-self.start_pos[0]), abs(y-self.start_pos[1])]
-
-    def get_moves(self, obs, unit_id, unit_pos):
-        prev_pos = [unit_pos[0] - direction_to_change(self.prev_actions[unit_id][0])[0], unit_pos[1] - direction_to_change(self.prev_actions[unit_id][0])[1]]
-        new_pos = [[unit_pos[0], unit_pos[1]-1],
-                  [unit_pos[0]+1, unit_pos[1]],
-                  [unit_pos[0], unit_pos[1]+1],
-                  [unit_pos[0]-1, unit_pos[1]]]
-        moves = [0]
-        for ii, pos in enumerate(new_pos):
-            if pos[0]<0 or pos[1]<0 or pos[0]>=self.width or pos[1]>=self.height or (pos[0]==prev_pos[0] and pos[1]==prev_pos[1]) or obs["map_features"]["tile_type"][pos[0], pos[1]]==2 :
-            #if pos[0]<0 or pos[1]<0 or pos[0]>23 or pos[1]>23 or obs["map_features"]["tile_type"][pos[0], pos[1]]==2:
-                pass
-            else:
-                moves.append(direction_to(unit_pos, pos))
-        #print(moves)
-        return moves
+        
+        a = torch.tensor(np.stack((np.repeat(np.arange(24),24,axis=0).reshape((24,24)), np.repeat(np.arange(24),24,axis=0).reshape((24,24)).T),axis=2))
+        self.map_2d_indices = torch.cat((a[:,:,0].view(576,1), a[:,:,1].view(576,1)),dim=1).numpy()
+        self.map_1d_indices = np.arange(576).reshape((24,24))
         
     def reset(self):
         self.match_num += 1
         self.unit_has_target = -np.ones((self.n_units))
-        self.unit_targets = dict(zip(range(0,self.n_units), np.zeros((self.n_units,2))))
+        self.unit_targets = np.zeros((self.n_units,2))
         self.unit_targets_previous = dict(zip(range(0,self.n_units), np.zeros((self.n_units,2))))
         self.unit_path = dict(zip(range(0,self.n_units), [[] for i in range(0,self.n_units)]))
         self.available_unit_ids = []
         self.unit_moved = np.zeros((self.n_units))
         self.prev_points = 0
         self.prev_point_diff = 0
+        self.prev_energy_total = self.n_units*100
         self.prev_points_increase = 0
         self.prev_actions = np.zeros((self.n_units,3))
         self.prev_proxy_actions = np.zeros((self.n_units,5))
@@ -205,10 +186,12 @@ class ProxyAgent():
         return np.sum(pos_map * np.clip(c.numpy().round(2),a_min=None,a_max=3))
     
     def get_init_proxy_obs(self, obs):
-         return (np.array([np.zeros((24,24),dtype=int) for i in range(6)]),np.array([0 for i in range(10)]), np.zeros((self.n_units,11),dtype=int))
+         return (np.array([np.zeros((24,24),dtype=int) for i in range(6)]),np.array([0 for i in range(10)]), np.zeros((self.n_units,6),dtype=int))
      
     def step(self, obs, step):        
-        if step in [101,202,303,404]:
+        #print("\n\n\n", step)
+        if step in [101,202,303,404,505]:
+            #print("reset")
             self.reset()
         reward = 0
         unit_mask = np.array(obs["units_mask"][self.team_id]) # shape (max_units, )
@@ -228,39 +211,81 @@ class ProxyAgent():
         # ids of units you can control at this timestep
         current_tile_map = obs["map_features"]["tile_type"]
         current_energy_map = obs["map_features"]["energy"]
+        #print(team_points, increase)
+        # visible relic nodes
+        visible_relic_node_ids = set(np.where(observed_relic_nodes_mask)[0])
+        # save any new relic nodes that we discover for the rest of the game.
+        for ii in visible_relic_node_ids:
+            if ii not in self.discovered_relic_nodes_ids:
+                # explore units switch to relic collection
+                self.relic_map.new_relic(observed_relic_node_positions[ii])
+                self.discovered_relic_nodes_ids.add(ii)
+                self.discovered_relic_nodes_ids.add((ii+3)%6)
+                self.relic_node_positions.append(observed_relic_node_positions[ii])
         
+
+
         #print(self.unit_targets.items())
         ### proxy reward calculation based on curriculum step###
         # change in point difference 
-        reward += increase
+        #reward += increase
         # win or lose
-        '''if obs["team_points"][self.team_id]>self.wins:
-            self.wins = obs["team_points"][self.team_id]
-            reward += 1000
-        if obs["team_points"][abs(self.team_id-1)]>self.wins:
-            self.wins = obs["team_points"][abs(self.team_id-1)]
-            reward += -1000'''
-        #reward += 0.1*np.sum(self.unit_energys-self.previous_energys)
+        #if obs["team_points"][self.team_id]>self.wins:
+        #    self.wins = obs["team_points"][self.team_id]
+        #    reward += 1000
+        #if obs["team_points"][abs(self.team_id-1)]>self.wins:
+        #    self.wins = obs["team_points"][abs(self.team_id-1)]
+        #    reward += -1000
+        #reward += increase
+        #reward += 0.1*np.sum(self.unit_energys-self.previous_energys)                
+        n_unknown_old = np.sum(1*(self.tile_map.map[1:23,1:23]!=-1))
+        #reward += n_unknown
+        # update maps
+        self.available_unit_ids = np.where(unit_mask)[0].tolist()
+        self.relic_map.step(self.unit_positions, increase)
+        tile_shift = self.tile_map.update(current_tile_map)
+        energy_shift = self.energy_map.update(current_energy_map)
+        n_unknown = np.sum(1*(self.tile_map.map[1:23,1:23]!=-1))
+        reward += 0.001*max(0,n_unknown-n_unknown_old)
+        
+        
         if self.cr>-1:
-            n_unknown = np.mean(1*(self.tile_map.map!=-1))
-            reward += 0.5*np.sqrt(n_unknown)
-            reward += self.get_close_known_score(self.positions_to_map(self.unit_positions))
+            #reward += self.get_close_known_score(self.positions_to_map(self.unit_positions))
             #reward += 0.5*self.get_close_known_score(self.positions_to_map(self.unit_targets))
             #print(self.prev_proxy_actions.shape)
+            targets = []
             for unit in range(self.n_units):
-                pos = self.unit_positions[unit]
-                #if pos[0]!=-1 and pos[1]!=-1:
-                #print("\n\n\n","unit", unit, "prev ac", self.prev_proxy_actions[unit][0])
-                if self.prev_proxy_actions[unit][0]==1:
-                    reward += -1
+                pos = [int(self.unit_positions[unit][0]),int(self.unit_positions[unit][1])]
+                if pos[0]!=-1 and pos[1]!=-1:
+                    if self.relic_map.map_knowns[pos[0],pos[1]]==1 and pos not in targets:
+                        targets.append(pos)
+                        reward += 1
+            
+            for unit in range(self.n_units):
+                pos = [int(self.unit_positions[unit][0]),int(self.unit_positions[unit][1])]
+                if pos[0]!=-1 and pos[1]!=-1:
+                    if self.prev_proxy_actions[unit][0]==0:
+                        t = [int(self.unit_targets[unit,0]),int(self.unit_targets[unit,1])]
+                        if t not in targets:
+                            #reward += 0.01
+                            targets.append(t)
+                            if self.relic_map.map_possibles[t[0],t[1]]==1:
+                                reward +=0.01
+                            if self.relic_map.map_knowns[t[0],t[1]]==1:
+                                reward +=0.02
+                    else:
+                        reward += -0.01
+                    
+                #print("\n\n\n","unit", unit, "prev ac",  and self.prev_proxy_actions[unit][0])
+                #    reward += 1
                 #else:
                 #if self.relic_map.map_knowns[pos[0],pos[1]]==1:
                 #    reward += 10
                 # units targeting possibles/known fragments
-                '''t = self.unit_targets[unit]
-                t = [int(t[0]),int(t[1])]
-                e = 0.25*self.get_explore_score(t)
-                reward += e'''
+                #t = self.unit_targets[unit]
+                #t = [int(t[0]),int(t[1])]
+                #e = 0.25*self.get_explore_score(t)
+                #reward += e
                 #if self.tile_map.map[int(t[0]),int(t[1])]==-1:
                 #    reward += 1
                     #print("explore score", e, "target", t)
@@ -280,21 +305,7 @@ class ProxyAgent():
             #f self.compare_positions
                 
             
-        # visible relic nodes
-        visible_relic_node_ids = set(np.where(observed_relic_nodes_mask)[0])
-        # save any new relic nodes that we discover for the rest of the game.
-        for ii in visible_relic_node_ids:
-            if ii not in self.discovered_relic_nodes_ids:
-                # explore units switch to relic collection
-                self.relic_map.new_relic(observed_relic_node_positions[ii])
-                self.discovered_relic_nodes_ids.add(ii)
-                self.discovered_relic_nodes_ids.add((ii+3)%6)
-                self.relic_node_positions.append(observed_relic_node_positions[ii])
-        # update maps
-        self.available_unit_ids = np.where(unit_mask)[0].tolist()
-        self.relic_map.step(self.unit_positions, increase)
-        tile_shift = self.tile_map.update(current_tile_map)
-        energy_shift = self.energy_map.update(current_energy_map)        
+        
 
         # find out move cost
         if step>2 and not self.move_check and self.tile_map.map[self.unit_positions[0][0],self.unit_positions[0][1]]!=1 and self.unit_moved[0]:
@@ -317,7 +328,6 @@ class ProxyAgent():
         # TODO explore map
         tiles = np.zeros((24,24))
         tiles[self.tile_map.map==-1] = 1
-        #print(np.mean(tiles))
         energy = self.energy_map.map.copy()
         energy[self.tile_map.map==1] = energy[self.tile_map.map==1] - self.nebula_drain
         on_known = np.zeros((self.n_units,1))
@@ -332,8 +342,9 @@ class ProxyAgent():
         # param: episode 1 hot, epi step, p diff, unit e, living units
         episode = [0,0,0,0,0]
         episode[int(max(0,(step-1)//101))] = 1
-        obs_params = np.array(episode+[(step-1)%101, increase, diff, np.sum(self.unit_energys), np.sum(1*(unit_mask))])
-        obs_units = np.concatenate((np.expand_dims(np.array(unit_mask),-1).astype(int), np.array(self.unit_positions).astype(int), self.prev_proxy_actions.astype(int), 
+        obs_params = np.array(episode+[(step-1)%101, increase, diff, np.sum(unit_mask*self.unit_energys), np.sum(1*(unit_mask))])
+        obs_units = np.concatenate((np.expand_dims(np.array(unit_mask),-1).astype(int), np.expand_dims(self.map_1d_indices[self.unit_positions[:,0],self.unit_positions[:,1]],-1).astype(int), 
+                                    np.expand_dims(self.map_1d_indices[self.unit_targets[:,0].astype(int),self.unit_targets[:,1].astype(int)],-1).astype(int), 
                                     np.expand_dims(self.unit_energys,-1).astype(int), tile_energys.astype(int), on_known.astype(int)), axis=-1)
         proxy_obs = (obs_maps, 
                      obs_params, 
@@ -343,10 +354,10 @@ class ProxyAgent():
         
     def act(self, obs, step):
         proxy_obs, _ = self.step(obs, step)
-        proxy_obs = (torch.tensor(proxy_obs[0].astype(np.float32)).unsqueeze(0),
-                     torch.tensor(proxy_obs[1].astype(np.float32)).unsqueeze(0),
-                     torch.tensor(proxy_obs[2].astype(np.float32)).unsqueeze(0))
+        proxy_obs = (torch.tensor(proxy_obs[0]).to(torch.float32).unsqueeze(0),torch.tensor(proxy_obs[1]).to(torch.float32).unsqueeze(0),torch.tensor(proxy_obs[2]).to(torch.float32).unsqueeze(0))
         proxy_action,_,_ = self.actor.get_action(proxy_obs)
+        print(proxy_action)
+        print(torch.unique(proxy_action[:,:,1], dim=-1).flatten().shape[0])
         return self.proxy_to_act(proxy_action)
         
         
@@ -356,18 +367,46 @@ class ProxyAgent():
             proxy_action = proxy_action.squeeze().cpu().detach().numpy()
         #print(proxy_action)
         actions = np.zeros((self.n_units, 3), dtype=int)
-        for unit in range(self.n_units):
+        discover_flag = 0
+        for unit in self.available_unit_ids:
+            unit_pos = self.unit_positions[unit]
             if proxy_action[unit,0]==1:
-                actions[unit] = [5, proxy_action[unit,3], proxy_action[unit,4]]
+                t = self.map_2d_indices[proxy_action[unit,2]]
+                actions[unit] = [5, t[0],t[1]]
             else:
-                self.unit_targets[unit] = [proxy_action[unit,1],proxy_action[unit,2]]
+                t = self.map_2d_indices[proxy_action[unit,1]]
+                self.unit_targets[unit] = [t[0],t[1]]
                 '''if not self.compare_positions(self.unit_targets[unit], self.unit_targets_previous[unit]):
                     path, _ = a_star(unit_positions[unit], self.unit_targets[unit], self.tile_map.map, self.energy_map.map, self.relic_map.map_knowns, self.move_cost, self.nebula_drain, use_energy=False)
                     self.unit_path[unit] = path[1:]'''
                 direction = direction_to(self.unit_positions[unit], self.unit_targets[unit])
                 change = direction_to_change(direction)
-                self.unit_path[unit] = [self.unit_positions[unit][0]+change[0],self.unit_positions[unit][1]+change[1]]
-                actions[unit] = [direction, 0, 0]
+                self.unit_path[unit] = [[int(self.unit_positions[unit][0]+change[0]),int(self.unit_positions[unit][1]+change[1])]]
+                if self.unit_energys[unit]<self.move_cost:
+                        actions[unit]=[0,0,0]
+                elif self.unit_path[unit]:
+                    if self.relic_map.map_possibles[self.unit_path[unit][0][0],self.unit_path[unit][0][1]]==1:
+                        if discover_flag:
+                            if self.relic_map.map_possibles[unit_pos[0],unit_pos[1]]==1:
+                                actions[unit] = self.relic_map.move_away(self.tile_map.map, [unit_pos[0],unit_pos[1]])
+                                self.unit_path[unit].insert(0, unit_pos)
+                            else:
+                                actions[unit]=[0,0,0]
+                        else:
+                            actions[unit] = [direction_to(unit_pos, self.unit_path[unit].pop(0)), 0, 0]
+                            discover_flag=1
+                    else:
+                        actions[unit] = [direction_to(unit_pos, self.unit_path[unit].pop(0)), 0, 0]
+                else:
+                    if self.relic_map.map_possibles[unit_pos[0],unit_pos[1]]==1:
+                        if discover_flag:
+                            actions[unit] = self.relic_map.move_away(self.tile_map.map, [unit_pos[0],unit_pos[1]])
+                            self.unit_path[unit].insert(0, unit_pos)
+                        else:
+                            actions[unit]=[0,0,0]
+                            discover_flag = 1
+                    else:
+                        actions[unit]=[0,0,0]
         self.prev_proxy_actions = proxy_action
         self.prev_actions = actions
         self.unit_targets_previous = self.unit_targets
@@ -393,8 +432,10 @@ class Critic(nn.Module):
         self.cnn = nn.Sequential(
             layer_init(nn.Conv2d(self.n_maps, 16, kernel_size=3, padding=1)),
             nn.ReLU(),
+            #nn.MaxPool2d(2),
             layer_init(nn.Conv2d(16, 8, kernel_size=3, padding=1)),
             nn.ReLU(),
+            #nn.MaxPool2d(2),
             nn.Flatten(),
             layer_init(nn.Linear(576*8, 128)),
             nn.ReLU(),
@@ -443,7 +484,7 @@ class Actor(nn.Module):
             #layer_init(nn.Conv2d(16, 32, kernel_size=3, padding=1)),
             #nn.ReLU(),
             #nn.MaxPool2d(2),
-            layer_init(nn.Conv2d(32, self.transformer_embedding_dim-2, kernel_size=3, padding=1)),
+            layer_init(nn.Conv2d(32, self.transformer_embedding_dim-1, kernel_size=3, padding=1)),
             nn.ReLU(),
             #nn.MaxPool2d(2),
             nn.Flatten(start_dim=-2),
@@ -465,14 +506,14 @@ class Actor(nn.Module):
             nn.ReLU(),
             layer_init(nn.Linear(256, 128)),
             nn.ReLU(),
-            layer_init(nn.Linear(128, 2+4*24)),
+            layer_init(nn.Linear(128, 2+2*576)),
         )
 
     def get_action(self, x, action=None, verbose=0):
         maps, state_params, unit_params = x
         #maps = torch.flatten(maps,start_dim=-2).permute(0,2,1)
         batch_size, n_units = unit_params.shape[0], unit_params.shape[1] # B, N
-        map_positions = self.map_positions.repeat(batch_size,1,1)
+        map_positions = torch.arange(576).unsqueeze(0).unsqueeze(2).repeat(batch_size,1,1) #self.map_positions.repeat(batch_size,1,1)
         #encoder_out = self.actor_encoder(self.embedding_maps(maps)) # B x 576 x 16
         cnn_out = self.cnn(maps).swapaxes(-1,-2)
         #kv = self.cnn_to_kv(cnn_out)
@@ -483,7 +524,7 @@ class Actor(nn.Module):
         all_logits = self.out_to_logits(decoder_out_state_params_combined) # B x N x 2+4*24
 
         move_type_logits = all_logits[:,:,:2].unsqueeze(-2) # B x N x 1 x 2
-        target_logits = all_logits[:,:,2:].view(batch_size, n_units, 4, self.action_dim) # B x N x 4 x 24
+        target_logits = all_logits[:,:,2:].view(batch_size, n_units, 2, self.action_dim) # B x N x 4 x 24
         
         move_type_probs = Categorical(logits=move_type_logits)
         target_probs = Categorical(logits=target_logits)
@@ -496,7 +537,7 @@ class Actor(nn.Module):
             action_type = action[:,:,0].unsqueeze(dim=-1)
             action_target = action[:,:,1:]
         probs = torch.cat((move_type_probs.log_prob(action_type), target_probs.log_prob(action_target)),dim=-1) # B x N x 5
-        return action, probs, move_type_probs.entropy() + target_probs.entropy()
+        return action, probs, torch.cat((move_type_probs.entropy(),target_probs.entropy()),dim=-1)
 
 
 class ActorCritic(nn.Module):
