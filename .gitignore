@@ -3,6 +3,7 @@ my_agent/submission.tar.gz
 replays/
 runs/
 models/
+data/
 .conda/
 .ipynb_checkpoints/
 __pycache__/

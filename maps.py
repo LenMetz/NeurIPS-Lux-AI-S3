@@ -124,10 +124,14 @@ class RelicMap():
 class TileMap():
     def __init__(self):
         self.map = -np.ones((24,24))
+        self.map_age = np.ones((24,24))
+        #self.map_age
         self.known = np.zeros((24,24))
-    def update(self, current):
+    def update(self, current, step):
+        self.map_age += 1
         shift = self.check_shift(current)
         self.map[current!=-1] = current[current!=-1]
+        self.map_age[current!=-1] = 0
         self.known[self.map!=-1] = 1
         self.mirror()
         return shift
@@ -144,15 +148,10 @@ class TileMap():
             self.map = -np.ones((24,24))
             current1 = (self.known*current)[1:24,0:23]
             current2 = (self.known*current)[0:23,1:24]
-            new_known = np.zeros((24,24))
             if np.sum(1*(map1[current1!=-1]!=current1[current1!=-1]))>np.sum(1*(map2[current2!=-1]!=current2[current2!=-1])):
                 self.map[0:23,1:24] = mapcp[1:24,0:23]
-                new_known[0:23,1:24] = self.known[1:24,0:23]
-                self.known = new_known
             else:
                 self.map[1:24,0:23] = mapcp[0:23,1:24]
-                new_known[1:24,0:23] = self.known[0:23,1:24]
-                self.known = new_known
             return 1
         else:
             return 0
