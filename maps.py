@@ -148,14 +148,27 @@ class TileMap():
             self.map = -np.ones((24,24))
             current1 = (self.known*current)[1:24,0:23]
             current2 = (self.known*current)[0:23,1:24]
-            if np.sum(1*(map1[current1!=-1]!=current1[current1!=-1]))>np.sum(1*(map2[current2!=-1]!=current2[current2!=-1])):
-                self.map[0:23,1:24] = mapcp[1:24,0:23]
-            else:
+            new_known = np.zeros((24,24))
+            if (map1[current1!=-1]==current1[current1!=-1]).all():
                 self.map[1:24,0:23] = mapcp[0:23,1:24]
+                new_known[1:24,0:23] = self.known[0:23,1:24]
+                self.known = new_known
+            elif (map2[current2!=-1]==current2[current2!=-1]).all():
+                self.map[0:23,1:24] = mapcp[1:24,0:23]
+                new_known[0:23,1:24] = self.known[1:24,0:23]
+                self.known = new_known
+            else:
+                self.map = current
+                new_known[current!=-1] = 0
+                self.known = new_known
             return 1
         else:
             return 0
             
+    def get_asteroid_map(self):
+        asteroid_map = np.zeros((24,24))
+        asteroid_map[self.map==2] = 1
+        return asteroid_map
             
 
 class EnergyMap():
