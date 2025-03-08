@@ -132,7 +132,6 @@ class TileMap():
         shift = self.check_shift(current)
         self.map[current!=-1] = current[current!=-1]
         self.map_age[current!=-1] = 0
-        self.map_age[np.rot90(np.flip(current,1),3)!=-1] = 0
         self.known[self.map!=-1] = 1
         self.mirror()
         return shift
