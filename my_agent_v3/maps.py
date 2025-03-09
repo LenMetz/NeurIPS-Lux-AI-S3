@@ -79,15 +79,15 @@ class RelicMap():
             return moves_remain[0]
         return np.random.randint(1,5)
         
-    def step(self, unit_positions, increase):
+    def step(self, unit_positions, unit_energys, increase):
         S = []
         F = []
         ones = 0
         rest = []
         check_knowns = self.map_knowns.copy()
         check_possibles = self.map_possibles.copy()
-        for unit in unit_positions:
-            if unit[0]!=-1:
+        for ii, unit in enumerate(unit_positions):
+            if unit[0]!=-1 and unit_energys[ii]>=0:
                 if check_knowns[unit[0],unit[1]]==1:
                     ones += 1
                     check_knowns[unit[0],unit[1]]=0
@@ -101,6 +101,8 @@ class RelicMap():
             for unit in S:
                 self.map_possibles[unit[0],unit[1]]=0
                 self.map_confidence[unit[0],unit[1]]=0
+                self.map_possibles[abs(unit[1]-23),abs(unit[0]-23)]=0
+                self.map_confidence[abs(unit[1]-23),abs(unit[0]-23)]=0
         else:
             for unit in S:
                 self.map_confidence[unit[0],unit[1]]=r1/len(S)#self.map_confidence[unit[0],unit[1]]*()
@@ -110,11 +112,14 @@ class RelicMap():
                 if self.map_confidence[unit[0],unit[1]]==0.0:
                     self.map_confidence[unit[0],unit[1]]=0
                     self.map_possibles[unit[0],unit[1]]=0
+                    self.map_possibles[abs(unit[1]-23),abs(unit[0]-23)]=0
+                    self.map_confidence[abs(unit[1]-23),abs(unit[0]-23)]=0
                     #self.map_possibles[abs(unit[1]-23),abs(unit[0]-23)]=0
                 if self.map_confidence[unit[0],unit[1]]==1.0:
                     self.map_confidence[unit[0],unit[1]]=1
                     self.map_possibles[unit[0],unit[1]]=0
                     self.map_knowns[unit[0],unit[1]]=1
+                    self.map_confidence[abs(unit[1]-23),abs(unit[0]-23)]=1
                     self.map_possibles[abs(unit[1]-23),abs(unit[0]-23)]=0
                     self.map_knowns[abs(unit[1]-23),abs(unit[0]-23)]=1
                     
@@ -132,6 +137,7 @@ class TileMap():
         shift = self.check_shift(current)
         self.map[current!=-1] = current[current!=-1]
         self.map_age[current!=-1] = 0
+        self.map_age[np.rot90(np.flip(current,1),3)!=-1] = 0
         self.known[self.map!=-1] = 1
         self.mirror()
         return shift
@@ -223,4 +229,3 @@ class EnergyMap():
             return 1
         else:
             return 0
-        
