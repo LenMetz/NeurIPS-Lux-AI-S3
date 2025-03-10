@@ -47,6 +47,9 @@ class Agent():
         self.aim_weight = self.aim_weight+1
         self.dist_map = np.stack((np.repeat(np.arange(24),24,axis=0).reshape((24,24)), np.repeat(np.arange(24),24,axis=0).reshape((24,24)).T),axis=2).sum(axis=-1)
         self.a = np.stack((np.repeat(np.arange(24),24,axis=0).reshape((24,24)), np.repeat(np.arange(24),24,axis=0).reshape((24,24)).T),axis=2)
+        self.peri_thresh = np.zeros((24,24))
+        self.peri_thresh[self.dist_map>15] = 1
+        self.peri_thresh[self.dist_map<31] = 1
         self.explore_border = np.ones((24,24))
         self.explore_border[self.range:24-self.range,self.range:24-self.range] = np.zeros((24-2*self.range,24-2*self.range))
         self.explore_choices = self.a[np.sum(np.abs(self.a-np.array(self.start_pos)),axis=-1)<24-self.range]
@@ -63,13 +66,14 @@ class Agent():
         self.locked_fragment_targets = []
         self.fragment_locations = []
         self.occupied_fragments = []
-
+        self.unit_charge_add = np.zeros((16,))
         self.n_explore_units = 0
         self.unit_has_target = -np.ones((self.n_units)) # -1=no target; 0=explore target; 1=relic target; 2=on relic
         self.unit_targets = dict(zip(range(0,self.n_units), np.zeros((self.n_units,2))))
         self.unit_path = dict(zip(range(0,self.n_units), [[] for i in range(0,self.n_units)]))
         self.unit_moved = np.zeros((self.n_units))
         self.prev_points = 0
+        self.new_relic_flag = 0
         self.prev_points_increase = 0
         self.prev_actions = None
         self.previous_energys = 100*np.zeros((self.n_units))
@@ -144,6 +148,7 @@ class Agent():
         self.previous_predictions = np.zeros((24,24))
         self.occupied_fragments = []
         self.n_explore_units = 0
+        self.new_relic_flag = 0
         if self.match_num==2:
             self.n_explore_units = 3
         elif self.match_num==3:
@@ -189,13 +194,15 @@ class Agent():
                 if self.start_pos[0]==0:
                     if frag[0]+frag[1]>23:
                         if frag in self.occupied_fragments: 
-                            targets.append(frag)
+                            #targets.append(frag)
+                            pass
                         else:
                             targets.insert(0,frag)
                 else:
                     if frag[0]+frag[1]<23:
                         if frag in self.occupied_fragments: 
-                            targets.append(frag)
+                            pass
+                            #targets.append(frag)
                         else:
                             targets.insert(0,frag)
         return targets
@@ -247,7 +254,6 @@ class Agent():
                 self.occupied_fragments.remove([int(self.unit_targets[unit][0]),int(self.unit_targets[unit][1])])
 
     def sort_targets(self, targets, positions):
-        
         if targets and positions:
                 T = np.repeat(np.expand_dims(np.array(targets),axis=0),len(positions),axis=0)
                 P = np.tile(np.array(positions), len(targets)).reshape(len(positions),len(targets),2)
@@ -256,6 +262,30 @@ class Agent():
                 return (np.array(targets)[np.argsort(best)]).tolist()
         else:
             return []
+
+    def sort_targets_combat(self, targets):
+        if not targets:
+            return []
+        engs = []
+        for ii, t in enumerate(targets):
+            engs.append(self.energy_map.map[t[0],t[1]])
+        indices = np.argsort(engs)[::-1]
+        targets_new = []
+        for i in indices:
+            targets_new.append(targets[i])
+        list1 = [targets_new.pop(0)]
+        list2 = []
+        for t in targets_new:
+            if np.abs(np.array(t)-np.array(list1[-1])).sum()<2:
+                list1.append(t)
+            else:
+                list2.append(t)
+            if list2:
+                for t2 in list2[1:]:
+                    if np.abs(np.array(t2)-np.array(list1[-1])).sum()<2:
+                        list1.append(t2)
+    
+        return list1+list2
 
     def preaim(self, pos):
         frags = self.relic_map.get_fragments(self.start_pos)
@@ -386,7 +416,16 @@ class Agent():
                     new_enemy_map[pos[0],pos[1]] += 1
         return torch.tensor(new_enemy_map,dtype=torch.float32)
                 
-                
+    def get_charge_target(self, p, ast_map, unit_map):
+        new_unit_map = np.abs(1-unit_map)
+        new_unit_map[p[0],p[1]] = 1
+        target_map = torch.zeros((24,24),dtype=torch.float64)
+        target_map[p[0],p[1]] = 1
+        weight = torch.ones((7,7),dtype=torch.float64)
+        target_map = torch.nn.functional.conv2d(target_map.unsqueeze(0).unsqueeze(0), weight.unsqueeze(0).unsqueeze(0),padding="same").squeeze().numpy()*ast_map*self.energy_map.map*new_unit_map
+        max_index = np.unravel_index(np.argmax(target_map), target_map.shape)
+        return max_index
+        
     def explore_oldest(self, p):
         age_map = self.current_age_map.copy()
         dist_map = np.abs(p-self.a).sum(-1)
@@ -424,7 +463,13 @@ class Agent():
         current_tile_map = obs["map_features"]["tile_type"]
         current_energy_map = obs["map_features"]["energy"]
         vision_mask = obs["sensor_mask"]
-        
+
+        if self.new_relic_flag==0:
+            if self.match_num==2:
+                self.n_explore_units = 2
+            elif self.match_num==3:
+                self.n_explore_units = 1
+            
         if step in [102,203,304,405]:
             self.reset()
         # visible relic nodes
@@ -434,6 +479,7 @@ class Agent():
             if ii not in self.discovered_relic_nodes_ids:
                 # explore units switch to relic collection
                 self.n_explore_units = 0
+                self.new_relic_flag = 1
                 self.relic_map.new_relic(observed_relic_node_positions[ii])
                 self.unit_has_target[self.unit_has_target==0]=-1
                 self.unit_has_target[self.unit_has_target==3]=-1
@@ -444,7 +490,6 @@ class Agent():
                 # remove duplicates from relic targets
                 self.relic_targets = np.array(list({array.tobytes(): array for array in np.array(self.relic_targets)}.values())).tolist()
         # update maps
-        
         available_unit_ids = np.where(unit_mask)[0].tolist()
         self.relic_map.step(unit_positions, unit_energys, increase)
         tile_shift = self.tile_map.update(current_tile_map, step)
@@ -574,20 +619,20 @@ class Agent():
                             self.unit_has_target[unit] = -1
                             self.unit_targets[unit2] = pos
                             self.unit_path[unit2] = []'''
-            if self.unit_has_target[unit]==3 and self.compare_positions(self.unit_targets[unit],pos):
-                self.unit_has_target[unit]==4
+            '''if self.unit_has_target[unit]==3 and self.compare_positions(self.unit_targets[unit],pos):
+                self.unit_has_target[unit]==4'''
             # remove target if possible fragment has been cleared (by other unit)
             if self.unit_has_target[unit]==1 and self.relic_map.map_possibles[self.unit_targets[unit][0], self.unit_targets[unit][1]]==0 and self.relic_map.map_knowns[self.unit_targets[unit][0], self.unit_targets[unit][1]]!=1:
                 self.unit_has_target[unit] = -1
             # retarget def units
-            if self.unit_has_target[unit]==3 and self.compare_positions(self.unit_targets[unit],pos):
+            '''if self.unit_has_target[unit]==3 and self.compare_positions(self.unit_targets[unit],pos):
                 if self.fragment_locations:
                     target = self.get_defend_targets(self.fragment_locations[unit%len(self.fragment_locations)])
                     self.unit_targets[unit] = target
                     self.unit_path[unit],_ = a_star(pos, target, self.tile_map.map, self.energy_map.map, self.relic_map.map_knowns, self.move_cost, self.nebula_drain, use_energy=True, budget=unit_energys[unit])
                     self.unit_path[unit].pop(0)
                 else:
-                    self.unit_has_target[unit] = -1
+                    self.unit_has_target[unit] = -1'''
             # free unit that has been killed and reissue targets if necessary
             if self.unit_moved[unit] and self.compare_positions(pos, self.start_pos):
                 self.free_target(unit, pos)
@@ -621,12 +666,46 @@ class Agent():
         for r in self.relic_targets.copy():
             if self.tile_map.map[r[0],r[1]]==2:
                 self.relic_targets.remove(r)
-
+                    
         positions = []
         for u in available_unit_ids:
             positions.append(unit_positions[u])
+            
+        if available_unit_ids and self.relic_map.map_knowns.sum()>0:
+            attack_targets = self.get_attack_targets()
+            defense_targets = self.get_defend_targets(self.relic_map.map_knowns.copy(),len(available_unit_ids))
+        else:
+            attack_targets = []
+            defense_targets = []
+        if attack_targets:
+            attack_targets = self.sort_targets(attack_targets, positions)
+        attack_units = []
+        for i in available_unit_ids:
+            if self.unit_has_target[i]==3:
+                attack_units.append(i)
+        if self.predict_mode==1:
+            if len(available_unit_ids)>len(self.fragment_targets):
+                if attack_targets:
+                    for i in range(min(len(attack_units),3)):
+                        t = attack_targets[0]
+                        weight = torch.full((3,3),self.dropoff, dtype=torch.float64)
+                        weight[1,1] = 1
+                        peri_map = torch.nn.functional.conv2d(torch.tensor(unit_map*self.relic_map.map_knowns,dtype=torch.float64).unsqueeze(0).unsqueeze(0), 
+                                                              weight.unsqueeze(0).unsqueeze(0),padding="same").squeeze().numpy()
+                        unit, path = self.find_best_unit(t, attack_units, unit_positions, unit_energys, use_energy=True)
+                        attack_units.remove(unit)
+                        available_unit_ids.remove(unit)
+                        self.unit_path[unit] = path[1:]
+                        self.unit_has_target[unit] = 3
+                        self.unit_targets[unit] = t
+
         frag_targets = self.sort_targets(self.fragment_targets, positions)
-        poss_targets = self.sort_targets(self.relic_targets, positions) 
+        poss_targets = self.sort_targets(self.relic_targets, positions)
+        if frag_targets:
+            for ii, t in enumerate(frag_targets):
+                if np.abs(np.array(t)-self.start_pos).sum()>16:
+                    frag_targets = frag_targets[:ii] + self.sort_targets_combat(frag_targets[ii:])
+                    
         for ii, goal in enumerate(frag_targets):
             if available_unit_ids:
                 unit, path = self.find_best_unit(goal, available_unit_ids, unit_positions, unit_energys, use_energy=np.abs(self.start_pos-np.array([goal[0],goal[1]])).sum()>17) # max energy if contested, else shortest
@@ -651,32 +730,33 @@ class Agent():
                 self.explore_targets.remove(goal)
 
         # only keep targets that aren't exploring
-        for unit in available_unit_ids.copy():
+        '''for unit in available_unit_ids.copy():
             if self.unit_has_target[unit]==0 or self.unit_has_target[unit]==3:
                 if not self.compare_positions(unit_positions[unit], self.unit_targets[unit]):
-                    available_unit_ids.remove(unit)
+                    available_unit_ids.remove(unit)'''
         
         
-        if available_unit_ids and self.relic_map.map_knowns.sum()>0:
-            attack_targets = self.get_attack_targets()
-            defense_targets = self.get_defend_targets(self.relic_map.map_knowns.copy(),len(available_unit_ids))
-        else:
-            attack_targets = []
-            defense_targets = []
-        if attack_targets:
-            attack_targets = self.sort_targets(attack_targets, positions)
+        ast_map = self.tile_map.map.copy()
+        ast_map[ast_map==0] = 1
+        ast_map[ast_map==2] = 0
+            
         self.current_age_map = self.tile_map.map_age
         # send remaining units to explore (first match) or target 
         for ii, unit in enumerate(available_unit_ids.copy()):
             if not self.n_explore_units>0 and attack_targets:
                 t = attack_targets[0]
-                path, _ = a_star(unit_positions[unit], t, self.tile_map.map, self.energy_map.map, self.relic_map.map_knowns, 
+                weight = torch.full((3,3),self.dropoff, dtype=torch.float64)
+                weight[1,1] = 1
+                peri_map = torch.nn.functional.conv2d(torch.tensor(unit_map*self.relic_map.map_knowns,dtype=torch.float64).unsqueeze(0).unsqueeze(0), 
+                                                      weight.unsqueeze(0).unsqueeze(0),padding="same").squeeze().numpy()
+                path, _ = a_star(unit_positions[unit], t, self.tile_map.map, self.energy_map.map-5*peri_map*self.peri_thresh, self.relic_map.map_knowns, 
                                  self.move_cost, self.nebula_drain, use_energy=True, budget=unit_energys[unit])
+                available_unit_ids.remove(unit)
                 self.unit_path[unit] = path[1:]
                 self.unit_has_target[unit] = 3
                 self.unit_targets[unit] = t
-            else:
-                target = self.explore_oldest(unit_positions[unit]) #
+            elif self.n_explore_units>0:
+                target = self.explore_oldest(unit_positions[unit]) 
                 path, _ = a_star(unit_positions[unit], target, self.tile_map.map, self.energy_map.map, self.relic_map.map_knowns, self.move_cost, 
                                  self.nebula_drain, use_energy=True, budget=unit_energys[unit])
                 available_unit_ids.remove(unit)
@@ -684,17 +764,44 @@ class Agent():
                 self.unit_has_target[unit] = 0
                 self.unit_targets[unit] = target
                 self.n_explore_units -= 1
-
+        for ii, unit in enumerate(available_unit_ids.copy()):
+            if defense_targets:
+                t = defense_targets[ii]
+                path, _ = a_star(unit_positions[unit], t, self.tile_map.map, self.energy_map.map, self.relic_map.map_knowns, 
+                                 self.move_cost, self.nebula_drain, use_energy=True, budget=unit_energys[unit])
+                available_unit_ids.remove(unit)
+                self.unit_path[unit] = path[1:]
+                self.unit_has_target[unit] = 3
+                self.unit_targets[unit] = t
+            else:
+                target = self.explore_oldest(unit_positions[unit]) 
+                path, _ = a_star(unit_positions[unit], target, self.tile_map.map, self.energy_map.map, self.relic_map.map_knowns, self.move_cost, 
+                                 self.nebula_drain, use_energy=True, budget=unit_energys[unit])
+                available_unit_ids.remove(unit)
+                self.unit_path[unit] = path[1:]
+                self.unit_has_target[unit] = 0
+                self.unit_targets[unit] = target
+                self.n_explore_units -= 1
         
+        # charge low units
+        for unit in range(self.n_units):
+            if self.unit_has_target[unit]==3 and unit_energys[unit]<self.sap_cost+self.unit_charge_add[unit]:
+                target = self.get_charge_target(unit_positions[unit],ast_map, unit_map) 
+                path, _ = a_star(unit_positions[unit], target, self.tile_map.map, self.energy_map.map, self.relic_map.map_knowns, self.move_cost, 
+                                 self.nebula_drain, use_energy=True, budget=unit_energys[unit])
+                self.unit_path[unit] = path[1:]
+                self.unit_targets[unit] = target
+                self.unit_charge_add[unit] = 6*self.move_cost
+            else:
+                self.unit_charge_add[unit] = 0
+                    
+                
         unseen_frag = self.relic_map.map_knowns.copy()
         if self.team_id==0:
             unseen_frag[self.dist_map<=23] = 0
         else:
             unseen_frag[self.dist_map>=23] = 0
         unseen = np.zeros((24,24))
-        ast_map = self.tile_map.map.copy()
-        ast_map[ast_map==0] = 1
-        ast_map[ast_map==2] = 0
         unseen = unseen_frag*(1*np.logical_not(vision_mask))*ast_map
         
         sap_map = np.zeros((24,24))
@@ -702,11 +809,14 @@ class Agent():
         if not (np.array(enemy_positions)==-1).all():
             enemy_prediction = self.predict_enemies_rule(unit_positions, enemy_positions, enemy_energys)
         weight = torch.full((3,3),self.dropoff)
-        weight[1,1] = 1
-        sap_map = torch.nn.functional.conv2d((enemy_prediction+torch.tensor(((step+1)%4)*0.25*unseen,dtype=torch.float32)).unsqueeze(0).unsqueeze(0), weight.unsqueeze(0).unsqueeze(0),padding="same").squeeze().numpy()
+        weight[1,1] = 1.1
+        sap_map = torch.nn.functional.conv2d((enemy_prediction+torch.tensor(((step%4))*0.25*unseen,dtype=torch.float32)).unsqueeze(0).unsqueeze(0), weight.unsqueeze(0).unsqueeze(0),padding="same").squeeze().numpy()
 
         sap_count = np.zeros((24,24))
         discover_flag = 0
+        #print(step)
+        #print(self.n_explore_units)
+        #print(self.unit_has_target)
         # Decide on action. Follow path, if multiple units want to move to possible fragment only let one through, if attacking fire on enemy instead of moving
         for unit in range(self.n_units):
             unit_pos = unit_positions[unit]
@@ -720,30 +830,22 @@ class Agent():
                                          self.move_cost, self.nebula_drain, use_energy=True, budget=unit_energys[unit])
                         self.unit_path[unit] = path[1:]
                         break
+                
+                # sap
                 max_value = 0
                 if sap_map.sum()>1e-10:
                     dist_map = np.abs(self.a-unit_pos).sum(-1)+1
                     range_map = self.sap_range_map(unit_pos).numpy()
-                    unit_sap_map = sap_map*range_map*(1/dist_map)
+                    unit_sap_map = sap_map*range_map #+0.01*(1/dist_map)
                     max_index = np.unravel_index(np.argmax(unit_sap_map), unit_sap_map.shape)
                     max_value = sap_map[max_index[0],max_index[1]]
-                thresh = 5
-                if self.unit_has_target[unit]==0:
-                    thresh=0.95
-                elif self.unit_has_target[unit]==1:
-                    thresh=1.5
-                elif self.unit_has_target[unit]==2:
-                    thresh=max(0.6,2.49-0.5*(unit_energys[unit]//50))
-                elif self.unit_has_target[unit]==3:
-                    thresh=0.75
-                elif self.unit_has_target[unit]==4:
-                    thresh=0.5
-                # sap
-                if self.predict_mode==0:
-                    thresh += 0.3
-                
+                    
+                thresh = 1.0
                 if unit_energys[unit]>self.sap_cost and max_value>=thresh and (self.unit_has_target[unit]==3 or self.unit_has_target[unit]==2 or self.unit_has_target[unit]==4):
                     actions[unit]=[5,max_index[0]-unit_pos[0],max_index[1]-unit_pos[1]]
+                    sap_count[max_index[0],max_index[1]] += 1
+                    if sap_count[max_index[0],max_index[1]] == 4:
+                        sap_map[max_index[0],max_index[1]] = 0
                 else:
                     if self.unit_path[unit]:
                         for ii, e_unit in enumerate(enemy_positions):

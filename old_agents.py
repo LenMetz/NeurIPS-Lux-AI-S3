@@ -6,7 +6,7 @@ from astar import *
 
 
 class Agent():
-    def __init__(self, player: str, env_cfg) -> None:
+    def __init__(self, player: str, env_cfg, model_name=None, predict_mode=1) -> None:
         self.player = player
         self.opp_player = "player_1" if self.player == "player_0" else "player_0"
         self.team_id = 0 if self.player == "player_0" else 1
@@ -69,7 +69,7 @@ class Agent():
         return actions
 
 class Agent2():
-    def __init__(self, player: str, env_cfg) -> None:
+    def __init__(self, player: str, env_cfg, model_name=None, predict_mode=1) -> None:
         self.player = player
         self.opp_player = "player_1" if self.player == "player_0" else "player_0"
         self.team_id = 0 if self.player == "player_0" else 1
@@ -211,7 +211,7 @@ class Agent2():
         return actions
 
 class Agent3():
-    def __init__(self, player: str, env_cfg) -> None:
+    def __init__(self, player: str, env_cfg, model_name=None, predict_mode=1) -> None:
         self.player = player
         self.opp_player = "player_1" if self.player == "player_0" else "player_0"
         self.team_id = 0 if self.player == "player_0" else 1
@@ -774,7 +774,7 @@ class Agent3():
         return actions
 
 class Agent4():
-    def __init__(self, player: str, env_cfg, model_name=None) -> None:
+    def __init__(self, player: str, env_cfg, model_name=None, predict_mode=1) -> None:
         self.player = player
         self.opp_player = "player_1" if self.player == "player_0" else "player_0"
         self.team_id = 0 if self.player == "player_0" else 1
