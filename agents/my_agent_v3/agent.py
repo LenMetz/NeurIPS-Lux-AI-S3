@@ -447,6 +447,7 @@ class Agent():
         step is the current timestep number of the game starting from 0 going up to max_steps_in_match * match_count_per_episode - 1.
         """
         #print("Step: ", step)
+        match_step = obs["match_steps"]
         unit_mask = np.array(obs["units_mask"][self.team_id]) # shape (max_units, )
         unit_positions = np.array(obs["units"]["position"][self.team_id]) # shape (max_units, 2)
         unit_map = self.positions_to_map(unit_positions)
@@ -683,10 +684,13 @@ class Agent():
         for i in available_unit_ids:
             if self.unit_has_target[i]==3:
                 attack_units.append(i)
+        n_att = 3
+        if self.range==1:
+            n_att = 5
         if self.predict_mode==1:
             if len(available_unit_ids)>len(self.fragment_targets):
                 if attack_targets:
-                    for i in range(min(len(attack_units),3)):
+                    for i in range(min(len(attack_units),n_att)):
                         t = attack_targets[0]
                         weight = torch.full((3,3),self.dropoff, dtype=torch.float64)
                         weight[1,1] = 1
@@ -810,7 +814,14 @@ class Agent():
             enemy_prediction = self.predict_enemies_rule(unit_positions, enemy_positions, enemy_energys)
         weight = torch.full((3,3),self.dropoff)
         weight[1,1] = 1.1
-        sap_map = torch.nn.functional.conv2d((enemy_prediction+torch.tensor(((step%4))*0.25*unseen,dtype=torch.float32)).unsqueeze(0).unsqueeze(0), weight.unsqueeze(0).unsqueeze(0),padding="same").squeeze().numpy()
+        if match_step<24:
+            b = np.zeros((24,24))
+            b[self.a.sum(-1)>match_step]=0
+            b[self.a.sum(-1)<match_step]=1
+            b[self.a.sum(-1)>46-match_step] = 1
+        else:
+            b = np.ones((24,24))
+        sap_map = torch.nn.functional.conv2d((enemy_prediction+torch.tensor(((step%5))*0.25*unseen*b,dtype=torch.float32)).unsqueeze(0).unsqueeze(0), weight.unsqueeze(0).unsqueeze(0),padding="same").squeeze().numpy()
 
         sap_count = np.zeros((24,24))
         discover_flag = 0
