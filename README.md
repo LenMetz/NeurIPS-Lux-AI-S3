@@ -36,3 +36,19 @@ My PPO implementation includes the following modifications to the CleanRL baseli
 - Policy clip-value annealing
 - Early stopping of the actor updates if threshold of KL-divergence between new and old policy is reached, while critic updates continue
 - Reward scaling
+
+An agent trained for up to 10M timesteps did not yield any significant results and failed to beat an advanced rule-based agent. Possibe points of failure:
+- Mistakes in the implementation
+- Network setup unsuited for the task
+- Network sizes too small
+- Training time too short
+
+## IL
+Imitation learning aims to learn to play a game by imitating actions taken by knowledgable players.
+In this case, I extracted information from the games of the top 10 players and trained a CNN to imitate their actions given the environment information. This agent was set inside a basic rule-based agent that learns the environment and game parameters during play. The IL agent and trainig setup can be found [here](https://github.com/LenMetz/NeurIPS-Lux-AI-S3/blob/main/aimbot.ipynb).
+
+Similar to PPO, this attempt did not yield a strong agent and failed to beat an advanced rule base agent. Possible points of failure:
+- Network setup unsuited for the task
+- Network sizes too small
+- Training time too short
+- Lack of long-term strategy, since agent has no planning feature
