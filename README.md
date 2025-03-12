@@ -21,7 +21,7 @@ Submitted agents are pitting against each other in a randomized tournament resul
 # Solutions
 
 ## Rule-based
-The final submission to the challenge is an entirely rule-based agent which can be found [here](https://github.com/LenMetz/NeurIPS-Lux-AI-S3/blob/main/agent_dev.ipynb). Older iterations are stored for evaluation in [here](https://github.com/LenMetz/NeurIPS-Lux-AI-S3/blob/main/old_agents.py)
+The final submission to the challenge is an entirely rule-based agent which can be found [here](https://github.com/LenMetz/NeurIPS-Lux-AI-S3/blob/main/agent_dev.ipynb). Older iterations are stored for evaluation in [here](https://github.com/LenMetz/NeurIPS-Lux-AI-S3/blob/main/old_agents.py). Every element is implemented from scratch using Numpy/PyTorch.
 
 In the following I will lay out basic components of the agent, the control of the units and a number of minor additions to optimize the performance in different match situations. It should be noted that a full understanding of the game environment is necessary for these explanations.
 
@@ -49,17 +49,43 @@ My approach is essentially just calculating the energy change for enemy units an
 Both of these can be directly deduced from the energy change of a unit that is known to have moved or be on a nebula tile. I did not calculate the vision reduction and did not factor this is in any part of my strategy.
 
 ### Strategy
-At each step every unit is assigned a role:
-0: exploring
-1: moving towards possible/known fragment
-2: occupying a known fragment
-3: attacking/defending
+At each step every unit is assigned a role and a target to move towards based on its role:
 
-Depending on the tile type, every unit is given a target tile to move towards at every step.
+#### 0: Exploring
+Units move towards a tile in order to explore parts of the map and find relic tiles. 
+For a given unit, I assign every tile a score based on the "age" from the tile class and subtract the manhatten distance. So a combination of the how long the tiles haven't been visible and how far they are away. Then the unit targets the tile with the highest score. I also subtracted some points of the score for tiles close to the edge because occupying those tiles effectively reduces the vision of a unit and diminishes the exploration.
 
-#### Exploring
-Units move towards tile in order to explore parts of the map and find relic tiles. 
-For a given unit, I assign every tile a score based on the "age" from the tile class and subtract the manhatten distance. So a combination of the how long the tiles haven't been visible and how far they are away. Then the unit targets the 
+#### 1: Possible/known fragments
+These units move towards possible or known fragment tiles
+
+#### 2: Occupying known fragments
+Units that occupy known fragments and are actively extracting points.
+
+#### 3: Attacking/Defending
+Attacking units move towards fragment tiles on the enemy half of the map. Defending units occupy high-energy tiles around fragment tiles of the own half of the map
+
+### Role assignment
+
+The basic role is exploring. If no relic tiles are known all units explore. As soon as a relic tile is found, all units move to identify which tiles around it are fragment tiles. Any unit that occupies a fragment tile is then assigned the 2 role and no longer used to target other tiles (it is likely suboptimal to fix these units to occupying indefinitely as they make easy targets for sapping). For each possible/known fragment tiles only one, the closest, unit is chosen to target this tile. All leftover units are set to attacking/defending.
+
+Minor details:
+- In matches 2 and 3 of a game, two and one units are reserved for exploring to find newly spawning relic tiles.
+- If the number of fragment tiles is lower than the number of available units, a few units are reserved for attacking, even if they are closest to fragment tiles. This
+
+### Movement of units
+All units are assigned a target based on their role. The move action to take is determined using the [A* pathfinding algorithm](https://en.wikipedia.org/wiki/A*_search_algorithm). My implementation of A* has two modes, quickest path and highest energy remaining.
+#### quickest path
+Within A*, all cardinal tiles are considered adjacent neighbors. The distance function to a neighbor is move cost of the match. If a neighbor is an asteroid tile, a movecost of $10^{9}$ is added, ensuring these tiles are ignored if any other path is possible. This algorithm gives the shortest path in number of moves, meaning the unit reaches its target in the least number of moves. In order to ensure a unit doesn't run out of energy, I kept track of the energy of a unit along a given path as it changes with moving and energy from the tiles. If a unit's energy falls below the move cost, the final tile of this path is treated as having no neighbors, making it a deadend.
+I haven't verified/proven this, but I believe this implementation always gives the quickest possible path to a target
+#### Highest energy
+This version of A* works the same as the previous, only that the distance function to a neighbor uses the energy on the neighbor tile. Meaning the higher the neighbor energy is, the shorter the distance. Tile energys are normalized to be equal or greater zero, to prevent the path from doing circles or moving back and forth to farm energy. While this might be an advantageous strategy in some cases, I choose to block A* from doing so.
+
+For every unit I calculate the path to the target unit using A* and the next move is simply to the first element of the path. Attacking/defending and exploration units always use the highest-energy mode. Fragment units use the quickest path if the fragments are close to the starting tile and use highest energy if the tiles are closer to the centre of the map.
+
+
+Note that role assignments are redone at every time step. Simiarly the paths are recalculated at every step as well. While costly, this ensures the optimal unit for each task is always chosen.
+
+### Additional improvements I did not implement
 - Anticipate map movements
 
 ## PPO
