@@ -19,6 +19,49 @@ Each game consists of 5 matches on the same map. Each match is 100 timesteps.
 Submitted agents are pitting against each other in a randomized tournament resulting in the [leaderboard](https://www.kaggle.com/competitions/lux-ai-season-3/leaderboard?)
 
 # Solutions
+
+## Rule-based
+The final submission to the challenge is an entirely rule-based agent which can be found [here](https://github.com/LenMetz/NeurIPS-Lux-AI-S3/blob/main/agent_dev.ipynb). Older iterations are stored for evaluation in [here](https://github.com/LenMetz/NeurIPS-Lux-AI-S3/blob/main/old_agents.py)
+
+In the following I will lay out basic components of the agent, the control of the units and a number of minor additions to optimize the performance in different match situations. It should be noted that a full understanding of the game environment is necessary for these explanations.
+
+### Mapping
+Since the map is only partially observable, it is vital to store/infer all possible information about the map. This is divided into 3 separate maps that can be found [here](https://github.com/LenMetz/NeurIPS-Lux-AI-S3/blob/main/maps.py). An energy map, a map for the fragments and a map for the tile types.
+#### Energy map
+There are always two energy nodes on the map, which affect the energy of each tile with: $e=sin(1.2\times d+1)\times4$, where $d$ is the manhatten distance from the tile to the energy node. This calculation is done for every tile for both nodes and added together. Since the position of the two energy nodes is mirrored along the anti-diagonal of the map, there are only $576/2 + 12=300$ unique energy node configuration for the game. In a given match, I compare the observed energy map of the tiles to all possible configurations and select the first one that matches in all visible tiles. This map is then used for all non-visible tiles. At each subsequent step of the environment I check if any visible tiles don't match the assumed energy map and redo the selection from the 300 possible maps if this is the case. This implicitely identifies movement in the energy map. Since the maps are fairly dissimilar, I observed I find the correct energy map in essentially all steps. 
+#### Tile map
+In the tile map class I store a the type of every tile and which tiles are known/unknown. At every step of the environment I store the types of the currently visible tiles. Additionally, I check whether the type of all visible tiles matches their stored type. If not, then a shift in the map has occured. I subsequently identify the shift direction and shift the stored map accordingly. Even though the shifts happen at fixed intervals, I do not keep track of this and simply check at every step if the map has shifted. While this method works perfectly well for mapping the current tile type as best as possible, anticipating map movement would be helpful.
+Lastly I also store a tile "age" in this class. This is a simple integer per tile which indicates the steps since the agent last observed this tile. This feature is used for exploration.
+
+#### Fragment map
+This map stores two internal maps of the game environment. A map that indicates all possible locations of fragment tiles and a map that indicates known locations. If a relic tile is observed, this the 5 x 5 square around the relic tile is set as possible fragments. At each step of the environment this class checks the increase in points against the positions of all units on possible and known fragment tiles. The number of units on known fragment tiles is subtracted from the increase in points. If the number of remaining points matches the number of units on possible fragment tiles, these tiles are marked as known fragments (and no longer possible). If after subtracting known points the remainder is 0 all occupied possible fragment tiles are set as no longer possible.
+One issue that arises in this approach is, that, there could be more units on possible tiles than there are unexplained points left. Meaning only some units are on fragment tiles, while the others are on empty tiles. Which units are the point-giving ones and which aren't is cannot be directly determined in this single step. My solution is that for one step, I only allow one unit to move onto a possible fragment tile. If multiple units are on possible fragment tiles and their actual fragment locations cannot be directly deduced (if for example the relic spawns in with multiple units around it), I move all but one unit away from the possible tiles.
+
+It should be noted, that this approach for conflicts in the attribution of points to occupied tiles is in all likelihood suboptimal. I experimented with assigning probabilities to tiles and updating them over the subsequent observations, but this didn't yield a satisfying solution. There were often cases with too many conflicting units on too many possible fragments and at the very least it took too many steps until this converged to 100% certainty for all tiles.
+
+### Identifying unknown game parameters
+
+#### unit_sap_dropoff_factor and unit_energy_void_factor
+The former is vital in identifying optimal tiles to sap. The latter was not used in any part of my strategy, but it is very necessary in calculating the former when sapping is done to enemy units that are also being affected by the void.
+My approach is essentially just calculating the energy change for enemy units and checking which of the possible values for the two parameters line up with this change and the actions I took.
+
+#### unit_move_cost and nebula_energy_tile_energy_reduction
+Both of these can be directly deduced from the energy change of a unit that is known to have moved or be on a nebula tile. I did not calculate the vision reduction and did not factor this is in any part of my strategy.
+
+### Strategy
+At each step every unit is assigned a role:
+0: exploring
+1: moving towards possible/known fragment
+2: occupying a known fragment
+3: attacking/defending
+
+Depending on the tile type, every unit is given a target tile to move towards at every step.
+
+#### Exploring
+Units move towards tile in order to explore parts of the map and find relic tiles. 
+For a given unit, I assign every tile a score based on the "age" from the tile class and subtract the manhatten distance. So a combination of the how long the tiles haven't been visible and how far they are away. Then the unit targets the 
+- Anticipate map movements
+
 ## PPO
 An attempt for a reinforcement learning (RL) using proximal policy optimization (PPO) can be found [here](https://github.com/LenMetz/NeurIPS-Lux-AI-S3/blob/main/PPO_dev.ipynb). PPO implementation is a modified version of [CleanRL](https://github.com/vwxyzjn/cleanrl/blob/master/cleanrl/ppo.py).
 
