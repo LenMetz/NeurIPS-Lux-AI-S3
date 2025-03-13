@@ -82,11 +82,35 @@ This version of A* works the same as the previous, only that the distance functi
 
 For every unit I calculate the path to the target unit using A* and the next move is simply to the first element of the path. Attacking/defending and exploration units always use the highest-energy mode. Fragment units use the quickest path if the fragments are close to the starting tile and use highest energy if the tiles are closer to the centre of the map.
 
+Additionally, if attacking units are below a certain energy threshold they move to nearby high-energy tiles and charge up before continuing to move towards enemies.
 
 Note that role assignments are redone at every time step. Simiarly the paths are recalculated at every step as well. While costly, this ensures the optimal unit for each task is always chosen.
 
-### Additional improvements I did not implement
-- Anticipate map movements
+### Sapping
+For deciding if and where to sap, I predict to next position of all visible enemy units. Enemy units occupying fragment tiles are presumed not to move. For other enemy units they are predicted to either:
+1. Stay stationary if they didn't move in the current step
+2. Continue moving if they moved in the current step. The movement is presumed to be towards the closest fragment tile either on the enemy or my side of the map. This distinction is made by dividing the map into two halves, split along the most outside fragments on the enemy half of the map. The strategy behind this is to assume units that have moved further away from their starting point that the own fragment tiles away are on course to attack tile on my side of the map. For both cases A* is used to predict the next movement of the unit.
+Doing this calculation for all visible enemy units leads to a map of the next assumed state. I then a quick convolution using
+```math
+\begin{bmatrix}
+d & d & d\\\
+d & 1 & d\\\
+d & d & d\end{bmatrix}
+``` 
+as a kernel, where d is the sap_dropoff_factor. This gives an accurate map of the total energy drain inflicted by sapping each tile, assuming the predicted positions are correct of course.
+Additionally, in order to fascilitate sapping without vision, I add $(step \mod 5)\times 0.25 \times U \times B$  to the map. $U$ being a vision mask and $B$ being a map of all fragment tiles on the enemy half of the map. This method causes all unobserved tiles on the enemy half of the map that are fragments to be considered a sapping target, depending on the step of the environment. The inclusion of $step\mod 5$ stops these unseen tiles from being sapped at every step, as this was observed to be undesired behavior.
+
+Given this sap-value map, every unit saps the tile within its sap range that is assumed to inflict the highest energy damage. A threshold of 1.0 is applied, so units only sap if it is believed this action at minimum causes as much damage as it takes energy to sap. Furthermore, I restrict each tile to be sapped a maximum of 4 times, to prevent too many units firing on the sap spot.
+
+Sapping actions override any movement, meaning all units that can fire and have a valid sapping target within range will sap instead of moving.
+
+
+### Additional probable improvements I did not implement
+- Anticipate map shifts
+- Include anticipated map shifts in the A* algorithm to find paths that consider the future map (this would be a strong improvement imo)
+- Units occupying fragments moving away in order to evade enemy sap
+- Considering the energy void units inflict on neighboring tiles in the strategy
+- Any complex strategy involving collision to kill enemy units
 
 ## PPO
 An attempt for a reinforcement learning (RL) using proximal policy optimization (PPO) can be found [here](https://github.com/LenMetz/NeurIPS-Lux-AI-S3/blob/main/PPO_dev.ipynb). PPO implementation is a modified version of [CleanRL](https://github.com/vwxyzjn/cleanrl/blob/master/cleanrl/ppo.py).
